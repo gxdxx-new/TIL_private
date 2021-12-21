@@ -741,6 +741,157 @@ class OrderServiceTest {
 #### 단위테스트를 잘 만드는게 중요하다.
 - 단위테스트: 스프링이나 컨테이너의 도움 없이 순수 자바 코드로 테스트 하는것을 말한다.
 
+<br>
+
+# 스프링 핵심 원리 이해 2 - 객체 지향 원리 적용
+
+## 새로운 할인 정책 개발
+
+### 할인 정책을 확장한다.
+
+- 기존 정책은 VIP가 10000원을 주문하든 20000만원을 주문하든 항상 1000원을 할인했다.
+- 새로운 정책은 10% 할인을 적용해 10000원을 주문하면 1000원 할인, 20000원을 주문하면 2000원 할인을 해주려고 한다.
+
+### RateDiscountPolicy 추가
+
+<img src="https://user-images.githubusercontent.com/35963403/146946643-6aaa9bf3-b217-4ccf-8f64-d1e46b317e8c.PNG" width="700">
+
+### RateDiscountPolicy 코드 추가
+
+```java
+package gxdxx.spring_basic.discount;
+
+import hello.core.member.Grade;
+import hello.core.member.Member;
+
+public class RateDiscountPolicy implements DiscountPolicy {
+    
+    private int discountPercent = 10; //10% 할인
+  
+    @Override 
+    public int discount(Member member, int price) {
+        if (member.getGrade() == Grade.VIP) {
+            return price * discountPercent / 100;
+        }
+        return 0;
+    }
+}
+```
+
+### 테스크 코드 작성
+
+```java
+package gxdxx.spring_basic.discount;
+
+import hello.core.member.Grade;
+import hello.core.member.Member;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+class RateDiscountPolicyTest {
+    
+    RateDiscountPolicy discountPolicy = new RateDiscountPolicy();
+    
+    @Test 
+    @DisplayName("VIP는 10% 할인이 적용되어야 한다.") 
+    void vip_o() {
+        //given
+        Member member = new Member(1L, "memberVIP", Grade.VIP);
+        //when
+        int discount = discountPolicy.discount(member, 10000);
+        //then
+        assertThat(discount).isEqualTo(1000);
+    }
+    @Test
+    @DisplayName("VIP가 아니면 할인이 적용되지 않아야 한다.")
+    void vip_x() {
+        //given
+        Member member = new Member(2L, "memberBASIC", Grade.BASIC);
+        //when
+        int discount = discountPolicy.discount(member, 10000);
+        //then
+        assertThat(discount).isEqualTo(0);
+    }
+}
+```
+
+## 새로운 할인 정책 적용과 문제점
+
+### 할인 정책을 애플리케이션에 적용해본다.
+
+#### 할인 정책을 변경하려면 클라이언트인 OrderServiceImpl 코드를 수정해야 한다.
+
+```java
+public class OrderServiceImpl implements OrderService { 
+    
+    // private final DiscountPolicy discountPolicy = new FixDiscountPolicy();
+    private final DiscountPolicy discountPolicy = new RateDiscountPolicy();
+    
+}
+```
+
+#### 문제점
+
+- 역할과 구현을 충실하게 분리했다.
+- 다형성도 활용하고, 인터페이스와 구현 객체를 분리했다.
+- DIP: 주문서비스 클라이언트(OrderServiceImpl)는 DiscountPolicy 인터페이스에 의존하고 있다.
+  - 클래스 의존관계를 분석해보면 **추상(인터페이스) 뿐만 아니라 구체(구현) 클래스에도 의존하고 있다.**
+    - 추상(인터페이스) 의존: DiscountPolicy
+    - 구체(구현) 클래스: FixDiscountPolicy, RateDiscountPolicy
+- OCP: 변경하지 않고 확장하고 있다.
+  - 현재 코드는 기능을 확장해서 변경하면, 클라이언트 코드에 영향을 준다. 따라서 OCP를 위반한다.
+
+### 클라이언트 코드를 변경해야 되는 이유
+
+### 기대했던 의존관계
+
+<img src="https://user-images.githubusercontent.com/35963403/146950031-86c101cd-4263-4a6c-ade5-a12b9c302b4d.PNG" width="700">
+
+- 지금까지 단순히 DiscountPolicy 인터페이스에만 의존하고 있다고 생각했다.
+
+### 실제 의존관계
+
+<img src="https://user-images.githubusercontent.com/35963403/146950039-3b3b2b70-0043-474d-ba3a-56384fa24355.PNG" width="700">
+
+- 실제로는 OrderServiceImpl이 DiscountPolicy 뿐만 아니라 FixDiscountPolicy 구체 클래스도 함께 의존하고 있었다.
+- 실제 코드를 보면 DIP를 위반하고 있었다.
+
+### 정책 변경
+
+<img src="https://user-images.githubusercontent.com/35963403/146950052-13bfe9fd-afe4-4be3-9f5b-60c0870e3ce9.PNG" width="700>
+
+- 그래서 FixDiscountPolicy를 RateDiscountPolicy로 변경하는 순간 OrderServiceImpl의 소스코드도 함께 변경해야 한다.
+- OCP 위반이다.
+
+### 문제 해결 방법
+
+- 클라이언트 코드인 OrderServiceImpl 은 DiscountPolicy 의 인터페이스 뿐만 아니라 구체 클래스도 함께 의존한다.
+- 그래서 구체 클래스를 변경할 때 클라이언트 코드도 함께 변경해야 한다.
+- DIP를 위반하지 않도록 **인터페이스에만 의존하도록 의존관계를 변경**하면 된다.
+
+### 인터페이스에 의존하도록 설계를 변경
+
+<img src="https://user-images.githubusercontent.com/35963403/146950781-7eb7bb12-2ee4-42bf-9c08-f88e81bfbd03.PNG" width="700">
+
+### 인터페이스에 의존하도록 코드를 변경
+
+```java
+public class OrderServiceImpl implements OrderService {
+    //private final DiscountPolicy discountPolicy = new RateDiscountPolicy();
+    private DiscountPolicy discountPolicy;
+}
+```
+
+- 인터페이스에만 의존하도록 설계와 코드를 변경했다.
+- 그런데 구현체가 없는데 어떻게 코드를 실행할 수 있을까?
+- 실제 실행을 해보면 NPE(null pointer exception)가 발생한다.
+
+#### 해결방안
+
+- 문제를 해결하려면 누군가가 클라이언트인 OrderServiceImpl 에 DiscountPolicy 의 구현 객체를 대신 생성하고 주입해주어야 한다
 
 ## 관심사의 분리
 
@@ -765,3 +916,79 @@ getBena(): (객체이름, 객체타임)
 
 XML기반
 - 요즘 잘 사용x
+
+
+## 모든 빈 조회하기
+
+- iter입력해서 리스트나 배열 for문을 자동으로 생성
+- 타입을 지정안해줬기 때문에 ac.getBean(beanDefinitionName);하면 Object로 꺼내짐
+- BeanDefinition beanDefinition = ac.getBeanDefinition(beanDefinitionName); : 빈 하나하나에 대한 정보
+
+## 스프링 빈 조회 - 기본
+
+- Assertions.assertThat(memberService).isInstanceOf(MemberServiceImpl.class);: memberService가 MemberServiceImpl의 인스턴스인지 호가인
+- getBena()은 스프링 빈에 등록된 인스턴스 타입으로 결정되기 떄문에 인터페이스가 아닌 구체를 반환해도 가능
+
+## 스프링 빈 조회 - 동일한 타입이 둘 이상
+
+- NoUniqueBeanDefinitionException 에러가 발생한다.
+
+## 스프링 빈 조회 - 상속 관계
+
+- 실무에선 applicationContext에서 직접 getBean()을 할 일이 거의없다.
+- 스프링 컨테이너가 자동으로 의존관계 주입 해주는걸 쓰거나
+- Bean으로 직접 생성해서 쓴다.
+
+- 스프링 빈 만드는 2가지 : 직접 ㅅ프링 빈 등록, 팩토리 빈으로 등록, 일반적으로는 팩토리 빈을 통해서 등록
+
+# 싱글톤 컨테이너
+
+## 웹 애플리케이션과 싱글톤
+
+- 객체가 jvm 안에 딱 하나만 있어야 되는것
+
+고객이 3번 요청하면 객체가 3개 생성된다.
+
+- private static final  SingletonService instance = new SingletonService(); : 자기자신을 내부에 private로 가지고 있는데 static으로 가지고 있으면 클래스 레벨에 올라가기 때문에 딱 하나만 존재하게 된다.
+
+1. static 영역에 객체 instance(자기자신)를 미리 하나 생성해서 instance 변수에 참조를 넣어둔다. 올려둔다
+
+- same: 객체의 값이 같은지
+- equal: 객체의 참조값이 같은지 
+
+- 의존관계상 클라이언트가 구체 클래스에 의존한다. DIP를 위반한다.
+  - ex) AppConfig에서 return new MemberServiceImpl.getInstance() 
+
+## @Configuration과 싱글톤
+
+- MemberServiceImpl memberService = ac.getBean("memberService", MemberServiceImpl.class); : Impl에 테스트 용도로 작성해놓은 메서드를 사용하기 위해 Impl로 꺼냄
+  - 원래는 구체 타입으로 꺼내면 안좋음
+
+### configuration 적용하지 않고 하면
+
+- memberSerivce를 스프링빈으로 등록할 때 memberService() 메서드가 호출됩니다. 
+- 이 메서드가 호출되면 new MemberServiceImpl()을 생성하면서 memberRepository() 메서드를 호출해서 의존관계를 찾습니다.
+- 그런데 @Configuration이 없으니 memberRepository() 메서드가 스프링 코드인지 아닌지 인식하지 못하고, 순수한 자바 메서드로 호출 해버립니다. 
+- 그러면 내부에서 new MemoryMemberRepository()가 호출되는 것이지요.
+- 결국 스프링의 도움을 받지 못하고 스프링 빈이 아닌 순수 자바로 생성된 new MemoryMemberRepository()가 주입되어 버립니다. 
+- 이것은 스프링이 관리하는 객체가 아니라 방금 발생한 메서드 호출로 새로 생성된 객체입니다!
+- 결국 빈 1개, 일반 객체 2개가 존재하게 된다.
+
+#### 결국 다음과 같이 되는 것이지요.
+
+- @Autowired MemberService memberService; //여기 내부에 들어있는 memberRepository는 스프링 빈이 아님 단순히 new로 생성한 MemoryMemberRepository임
+- @Autowired MemberRepository memberRepository; //스프링 빈이 등록한 memberRepository
+- memberService.getMemberRepository() != memberRepository //따라서 둘은 다른 객체
+
+
+## 의존관계 자동주입
+
+- 스프링 컨텡이너
+  - 스프링 컨테이너에 스프링 빈을 등록 -> 연관관계를 자동으로 주입(@Autowied 들을 자동으로 주입)
+
+- 생성자 주입은 빈을 등록하면서 의존관계 주입도 같이 일어남
+
+### 필드 주입
+
+- 만 외부에서 변경이 불가능해서 테스트 하기 힘들다는 치명적인 단점이 있다
+  - setter를 만들어서 해결 가능하긴 함
