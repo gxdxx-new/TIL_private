@@ -761,8 +761,8 @@ class OrderServiceTest {
 ```java
 package gxdxx.spring_basic.discount;
 
-import hello.core.member.Grade;
-import hello.core.member.Member;
+import gxdxx.spring_basic.member.Grade;
+import gxdxx.spring_basic.member.Member;
 
 public class RateDiscountPolicy implements DiscountPolicy {
     
@@ -783,8 +783,8 @@ public class RateDiscountPolicy implements DiscountPolicy {
 ```java
 package gxdxx.spring_basic.discount;
 
-import hello.core.member.Grade;
-import hello.core.member.Member;
+import gxdxx.spring_basic.member.Grade;
+import gxdxx.spring_basic.member.Member;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -891,14 +891,405 @@ public class OrderServiceImpl implements OrderService {
 
 #### 해결방안
 
-- 문제를 해결하려면 누군가가 클라이언트인 OrderServiceImpl 에 DiscountPolicy 의 구현 객체를 대신 생성하고 주입해주어야 한다
+- 문제를 해결하려면 누군가가 클라이언트인 OrderServiceImpl에 DiscountPolicy의 **구현 객체를 대신 생성하고 주입**해주어야 한다
 
 ## 관심사의 분리
 
-생성자 주입: 생성자를 통해서 새로 생성된 객체가 들어감
+- 애플리케이션을 하나의 공연이라고 생각해보고 각각의 인터페이스를 배역이라고 생각해본다.
+- 배역에 맞는 배우를 선택하는 것은 배우들이 정하는게 아니다.
+- 이전 코드는 배역(인터페이스)을 하는 배우(구현체)가 다른 배역(인터페이스)의 배우(구현체)를 직접 고르는 것과 같다.
+- 그렇게 되면 배우가 공연도 하고 다른 배우도 직접 선택하는 **다양한 책임**을 가지게 된다.
 
-클라이언트, 서버: A객체가 B객체의 메서드를 호출하면 A클래스가 클라이언트, B클래스가 서버가 된다.
-클라이언트 서버라는 것은 작게는 이렇게 객체부터, 크게는 웹 브라우저(클라이언트) 서버(애플리케이션 서버) 개념까지 확장됩니다.
+### 관심사를 분리한다.
+
+- 배우는 본인의 역할인 배역을 수행하는 것에만 집중해야 한다.
+- 다른 배역을 어떤 배우가 맡게 되더라도 똑같이 공연을 해야 한다.
+- 공연을 구성하고, 배우를 섭외하고, 역할에 맞는 배우를 지정하는 책임을 담당하는 별도의 **공연 기획자**가 필요하다.
+- 공연 기획자를 만들고, 배우와 공연 기획자의 **책임을 확실하게 분리**한다.
+
+### AppConfig 생성하기
+
+- 애플리케이션의 전체 동작 방식을 구성(config)하기 위해, **구현 객체를 생성**하고, **연결**하는 책임을 가지는 별도의 설정 클래스를 생성한다.
+
+### AppConfig
+
+```java
+package gxdxx.spring_basic;
+
+import gxdxx.spring_basic.discount.FixDiscountPolicy;
+import gxdxx.spring_basic.member.MemberService;
+import gxdxx.spring_basic.member.MemberServiceImpl;
+import gxdxx.spring_basic.member.MemoryMemberRepository;
+import gxdxx.spring_basic.order.OrderService;
+import gxdxx.spring_basic.order.OrderServiceImpl;
+
+public class AppConfig {
+    
+    public MemberService memberService() {
+        return new MemberServiceImpl(new MemoryMemberRepository());
+    }
+ 
+    public OrderService orderService() {
+        return new OrderServiceImpl(new MemoryMemberRepository(), new FixDiscountPolicy());
+    }
+}
+```
+
+- AppConfig는 애플리케이션의 실제 동작에 필요한 **구현 객체를 생성**한다.
+  - MemberServiceImpl
+  - MemoryMemberRepository
+  - OrderServiceImpl
+  - FixDiscountPolicy
+- AppConfig는 생성한 객체 인스턴스의 참조(레퍼런스)를 **생성자를 통해서 주입(연결)해준다.**
+  - MemberServiceImpl -> MemoryMemberRepository
+  - OrderServiceImpl -> MemoryMemberRepository, FixDiscountPolicy
+  - 생성자 주입: 생성자를 통해서 새로 생성된 객체가 들어간다.
+
+### MemberServiceImpl - 생성자 주입
+
+```java
+package gxdxx.spring_basic.member;
+
+public class MemberServiceImpl implements MemberService {
+    
+    private final MemberRepository memberRepository;
+    
+    public MemberServiceImpl(MemberRepository memberRepository) {
+        this.memberRepository = memberRepository;
+    }
+    
+    public void join(Member member) {
+        memberRepository.save(member);
+    }
+ 
+    public Member findMember(Long memberId) {
+        return memberRepository.findById(memberId);
+    }
+}
+```
+
+- 설계 변경으로 MemberServiceImpl은 MemoryMemberRepository를 의존하지 않게 되었다.
+- MemberRepository 인터페이스만 의존한다.
+- MemberServiceImpl 입장에서 생성자를 통해 어떤 구현 객체가 들어올지(주입될지) 알 수 없다.
+- MemberServiceImpl의 생성자를 통해서 어떤 구현 객체를 주입할지는 오직 외부(AppConfig)에서 결정된다.
+- MemberServiceImpl은 이제부터 **의존관계에 대한 고민은 외부에 맡기고 실행에만 집중**하면 된다.
+
+### 클래스 다이어그램
+
+<img src="https://user-images.githubusercontent.com/35963403/146980461-7554eff9-a49f-494a-97eb-c067a9746b6c.PNG" width="700">
+
+- 객체의 생성과 연결은 AppConfig가 담당한다.
+- **DIP 완성**: MemberServiceImpl은 인터페이스인 MemberRepository에만 의존하면 된다. 구체 클래스를 몰라도 된다.
+- **관심사의 분리**: 객체를 생성하고 연결하는 역할과 실행하는 역할이 명확히 분리되었다.
+
+### 회원 객체 인스턴스 다이어그램
+
+<img src="https://user-images.githubusercontent.com/35963403/146980911-5cc113d2-a391-4d07-8ca8-cf16828e4d51.PNG" width="700">
+
+- appConfig 객체는 memoryMemberRepository를 생성한다.
+- 그 참조값을 memberServiceImpl을 생성하면서 생성자로 전달한다.
+- 클라이언트인 memberServiceImpl 입장에서 보면 의존관계를 마치 외부에서 주입해주는 것 같다고 해서 DI(Dependency Injection) 의존관계 주입이라 한다.
+- 클라이언트, 서버: A객체가 B객체의 메서드를 호출하면 A클래스가 클라이언트, B클래스가 서버가 된다.
+- 클라이언트 서버라는 것은 작게는 이렇게 객체부터, 크게는 웹 브라우저(클라이언트) 서버(애플리케이션 서버) 개념까지 확장된다.
+
+### OrderServiceImpl - 생성자 주입
+
+```java
+package gxdxx.spring_basic.order;
+
+import gxdxx.spring_basic.discount.DiscountPolicy;
+import gxdxx.spring_basic.member.Member;
+import gxdxx.spring_basic.member.MemberRepository;
+
+public class OrderServiceImpl implements OrderService { 
+    
+    private final MemberRepository memberRepository;
+    private final DiscountPolicy discountPolicy;
+ 
+    public OrderServiceImpl(MemberRepository memberRepository, DiscountPolicy discountPolicy) {
+        this.memberRepository = memberRepository;
+        this.discountPolicy = discountPolicy;
+    }
+ 
+    @Override
+    public Order createOrder(Long memberId, String itemName, int itemPrice) {
+        Member member = memberRepository.findById(memberId);
+        int discountPrice = discountPolicy.discount(member, itemPrice);
+        
+        return new Order(memberId, itemName, itemPrice, discountPrice);
+    }
+}
+```
+
+- 설계 변경으로 OrderServiceImpl은 FixDiscountPolicy를 의존하지 않게 되었다.
+- 대신 DiscountPolicy 인터페이스만 의존한다.
+- OrderServiceImpl 입장에서 생성자를 통해 어떤 구현 객체가 들어올지(주입될지)는 알 수 없다.
+- OrderServiceImpl의 생성자를 통해서 어떤 구현 객체을 주입할지는 오직 외부(AppConfig)에서 결정한다.
+- OrderServiceImpl은 이제부터 실행에만 집중하면 된다.
+- OrderServiceImpl에는 MemoryMemberRepository, FixDiscountPolicy 객체의 의존관계가 주입된다.
+
+###  AppConfig 실행
+
+#### MemberApp
+
+```java
+package gxdxx.spring_basic;
+
+import gxdxx.spring_basic.member.Grade;
+import gxdxx.spring_basic.member.Member;
+import gxdxx.spring_basic.member.MemberService;
+
+public class MemberApp {
+    
+    public static void main(String[] args) {
+        AppConfig appConfig = new AppConfig();
+        MemberService memberService = appConfig.memberService();
+        Member member = new Member(1L, "memberA", Grade.VIP);
+        memberService.join(member);
+ 
+        Member findMember = memberService.findMember(1L);
+        System.out.println("new member = " + member.getName());
+        System.out.println("find Member = " + findMember.getName());
+    }
+}
+```
+
+#### OrderApp
+
+```java
+package gxdxx.spring_basic;
+
+import gxdxx.spring_basic.member.Grade;
+import gxdxx.spring_basic.member.Member;
+import gxdxx.spring_basic.member.MemberService;
+import gxdxx.spring_basic.order.Order;
+import gxdxx.spring_basic.order.OrderService;
+
+public class OrderApp {
+    
+    public static void main(String[] args) {
+        AppConfig appConfig = new AppConfig();
+        MemberService memberService = appConfig.memberService();
+        OrderService orderService = appConfig.orderService();
+    
+        long memberId = 1L;
+        Member member = new Member(memberId, "memberA", Grade.VIP);
+        memberService.join(member);
+ 
+        Order order = orderService.createOrder(memberId, "itemA", 10000);
+        System.out.println("order = " + order);
+    }
+}
+```
+
+### 테스트 코드 오류 수정
+
+```java
+class MemberServiceTest { 
+    
+    MemberService memberService;
+ 
+    @BeforeEach
+    public void beforeEach() {
+        AppConfig appConfig = new AppConfig();
+        memberService = appConfig.memberService();
+    }
+}
+```
+
+```java
+class OrderServiceTest { 
+    
+    MemberService memberService;
+    OrderService orderService;
+ 
+    @BeforeEach
+    public void beforeEach() {
+        AppConfig appConfig = new AppConfig();
+        memberService = appConfig.memberService();
+        orderService = appConfig.orderService();
+    }
+}
+```
+
+- 테스트 코드에서 @BeforeEach는 각 테스트를 실행하기 전에 호출된다.
+
+### 정리
+
+- AppConfig를 통해서 관심사를 확실하게 분리했다.
+- 배역, 배우를 생각해보자.
+- AppConfig는 공연 기획자다.
+- AppConfig는 구체 클래스를 선택한다. 배역에 맞는 담당 배우를 선택한다. 애플리케이션이 어떻게 동작해야 할지 전체 구성을 책임진다.
+- 이제 각 배우들은 담당 기능을 실행하는 책임만 지면 된다.
+- OrderServiceImpl 은 기능을 실행하는 책임만 지면 된다.
+
+## AppConfig 리팩터링
+
+#### 현재 AppConfig를 보면 중복이 있고, 역할에 따른 구현이 잘 안보인다.
+
+### 기대하는 그림
+
+<img src="https://user-images.githubusercontent.com/35963403/146983172-04359588-40b7-484d-a740-03eecd56da77.PNG" width="700">
+
+### 리팩터링 전
+
+```java
+package gxdxx.spring_basic;
+
+import gxdxx.spring_basic.discount.FixDiscountPolicy;
+import gxdxx.spring_basic.member.MemberService;
+import gxdxx.spring_basic.member.MemberServiceImpl;
+import gxdxx.spring_basic.member.MemoryMemberRepository;
+import gxdxx.spring_basic.order.OrderService;
+import gxdxx.spring_basic.order.OrderServiceImpl;
+
+public class AppConfig {
+    
+    public MemberService memberService() {
+        return new MemberServiceImpl(new MemoryMemberRepository());
+    }
+ 
+    public OrderService orderService() {
+        return new OrderServiceImpl(new MemoryMemberRepository(), new FixDiscountPolicy());
+    }
+}
+```
+
+### 리팩터링 후
+
+```java
+package gxdxx.spring_basic;
+
+import gxdxx.spring_basic.discount.DiscountPolicy;
+import gxdxx.spring_basic.discount.FixDiscountPolicy;
+import gxdxx.spring_basic.member.MemberRepository;
+import gxdxx.spring_basic.member.MemberService;
+import gxdxx.spring_basic.member.MemberServiceImpl;
+import gxdxx.spring_basic.member.MemoryMemberRepository;
+import gxdxx.spring_basic.order.OrderService;
+import gxdxx.spring_basic.order.OrderServiceImpl;
+
+public class AppConfig {
+        
+    public MemberService memberService() {
+        return new MemberServiceImpl(memberRepository());
+    }
+ 
+    public OrderService orderService() {
+        return new OrderServiceImpl(memberRepository(), discountPolicy());
+    }
+ 
+    public MemberRepository memberRepository() {
+        return new MemoryMemberRepository();
+    }
+ 
+    public DiscountPolicy discountPolicy() {
+        return new FixDiscountPolicy();
+    }
+}
+```
+
+- new MemoryMemberRepository() 부분이 중복 제거되었다.
+- 이제 MemoryMemberRepository를 다른 구현체로 변경할 때 한 부분만 변경하면 된다.
+- AppConfig를 보면 역할과 구현 클래스가 한눈에 들어온다. 애플리케이션 전체 구성이 어떻게 되어있는지 빠르게 파악할 수 있다
+
+## 새로운 구조와 할인 정책 정용
+
+- 처음으로 돌아가서 정액 할인 정책을 정률(%) 할인 정책으로 변경해본다.
+- FixDiscountPolicy -> RateDiscountPolicy
+- 어떤 부분만 변경하면 될까?
+
+#### AppConfig의 등장으로 애플리케이션이 크게 사용 영역과, 객체를 생성하고 구성하는 영역으로 분리되었다.
+
+### 사용, 구성의 분리
+
+<img src="https://user-images.githubusercontent.com/35963403/147033125-f910e508-f659-430e-91d8-e69417cc2ee8.PNG" width="700">
+
+### 할인 정책의 변경
+
+<img src="https://user-images.githubusercontent.com/35963403/147033227-ac1cbf95-9b8e-42b2-b6b4-755fa7503891.PNG" width="700">
+
+- FixDiscountPolicy -> RateDiscountPolicy로 변경해도
+- **구성 영역만 영향을 받고, 사용 영역은 전혀 영향은 받지 않는다.**
+
+### 할인 정책 변경 구성 코드
+
+```java
+package gxdxx.spring_basic;
+
+import gxdxx.spring_basic.discount.DiscountPolicy;
+import gxdxx.spring_basic.discount.FixDiscountPolicy;
+import gxdxx.spring_basic.discount.RateDiscountPolicy;
+import gxdxx.spring_basic.member.MemberRepository;
+import gxdxx.spring_basic.member.MemberService;
+import gxdxx.spring_basic.member.MemberServiceImpl;
+import gxdxx.spring_basic.member.MemoryMemberRepository;
+import gxdxx.spring_basic.order.OrderService;
+import gxdxx.spring_basic.order.OrderServiceImpl;
+
+public class AppConfig {
+    
+    public MemberService memberService() {
+        return new MemberServiceImpl(memberRepository());
+    }
+ 
+    public OrderService orderService() {
+        return new OrderServiceImpl(memberRepository(), discountPolicy());
+    }
+ 
+    public MemberRepository memberRepository() {
+        return new MemoryMemberRepository();
+    }
+ 
+    public DiscountPolicy discountPolicy() {
+        // return new FixDiscountPolicy();
+        return new RateDiscountPolicy();
+    }
+}
+```
+
+- AppConfig에서 할인 정책 역할을 담당하는 구현을 FixDisCountPolicy -> RateDiscountPolicy 객체로 변경했다.
+- 이제 할인 정책을 변경해도, 애플리케이션의 구성 역할을 담당하는 AppConfig만 수정하면 된다.
+- 클라이언트 코드인 OrderServiceImpl를 포함해서 사용 영역의 어떤 코드도 변경할 필요가 없다.
+- 구성 영역은 당연히 변경된다. 구성 역할을 담당하는 AppConfig를 애플리케이션이라는 공연의 기획자로 생각하자.
+- 공연 기획자는 공연 참여자임 구현 객체들을 모두 알아야 한다.
+
+## 전체 흐름 정리
+
+#### 새로운 할인 정책 개발
+
+- 다형성 덕분에 새로운 정률 할인 정책 코드를 추가로 개발하는 것 자체는 아무 문제가 없었다.
+
+#### 새로운 할인 정책 적용과 문제점
+
+- 새로 개발한 정률 할인 정책을 적용하려고 하니 클라이언트 코드인 주문 서비스 구현체도 함께 변경해야 했다.
+- 주문 서비스 클라이언트가 인터페이스인 DiscountPolicy 뿐만 아니라, 구체 클래스인 FixDiscountPolicy도 함께 의존 했다.
+  - DIP 위반
+
+#### 관심사의 분리
+
+- 애플리케이션을 하나의 공연으로 생각했다.
+- 기존에는 클라이언트가 의존하는 서버 구현 객체를 직접 생성하고, 실행했다.
+- 비유를 하면 기존에는 남자 주인공 배우가 공연도 하고, 동시에 여자 주인공도 직접 초빙하는 다양한 책임을 가지고 있었던 것이다.
+- 공연을 구성하고, 담당 배우를 섭외하고, 지정하는 책임을 담당하는 별도의 공연 기획자가 나올 시점이였다.
+- 공연 기획자인 AppConfig가 등장했다.
+- AppConfig는 애플리케이션의 전체 동작 방식을 구성(config)하기 위해, 구현 객체를 생성하고, 연결하는 책임을 가지고 있다.
+- 이제부터 클라이언트 객체는 자신의 역할을 실행하는 것만 집중하면 되므로 권한이 줄어들었다(책임이 명확해진 것이다).
+
+#### AppConfig 리팩터링
+
+- 구성 정보에서 역할과 구현을 명확하게 분리했다.
+- 역할이 잘 드러난다.
+- 중복을 제거했다.
+
+#### 새로운 구조와 할인 정책 적용
+
+- 정액 할인 정책 -> 정률% 할인 정책으로 변경했다.
+- AppConfig의 등장으로 애플리케이션이 크게 **사용 영역**과, **객체를 생성하고 구성(Configuration)하는 영역**으로 분리되었다.
+- 할인 정책을 변경해도 AppConfig가 있는 구성 영역만 변경하면 된다. 사용 영역은 변경할 필요가 없다.
+- 물론 클라이언트 코드인 주문 서비스 코드도 변경하지 않는다.
+
+
 
 ### OCP
 소프트웨어 요소를 새롭게 확장해도 사용 영역의 변경은 닫혀 있다
@@ -992,3 +1383,69 @@ XML기반
 
 - 만 외부에서 변경이 불가능해서 테스트 하기 힘들다는 치명적인 단점이 있다
   - setter를 만들어서 해결 가능하긴 함
+
+## 생성자 주입을 선택하라 !
+
+- 수정자 주입을 하면 단위 테스트를 할 때 의존관계가 잘 보이지 않는다.
+- 구현 클래스 코드를 봐야지 의존관계를 알 수 있다.
+
+### 순수 자바 코드로 테스트
+
+```java
+class OrderServiceTest {
+    
+    @Test
+    void createOrder() {
+        MemoryMemberRespository memberRespository = new MemoryMemberRepository();
+        memberRespository.save(new Member(1L, "name", GRADE.VIP));
+        
+        OrderServiceImpl orderService = new OrderServiceImpl(memberRespository, new FixDiscountPolicy());
+        Order order = orderService.createOrder(1L, "itemA", 10000);
+        assertThat(order.getDiscountPrice()).isEqualTo(1000);
+    }
+}
+```
+
+- 스프링 없이 테스트 코드에서 필요한 구현체들을 직접 조합해서 테스트를 만들었다.
+- 생성자 주입을 사용하면 주입 데이터를 누락했을 때 컴파일 오류가 발생하면서 어떤 값을 필수로 주입해야 될지 쉽게 알수 있다.
+
+### final 키워드
+
+- final은 변수 선언시 초기값을 넣어주거나 생성자를 통해서만 값을 넣을 수 있다.
+- 장점: 생성자에서 값을 넣어주는것을 누락하면 자바 컴파일러가 알려준다.
+- setXX는 객체가 생성된 다음에 호출되기 때문에 final 키워드를 사용하지 못한다.
+
+## 롬복과 최신 트렌드
+
+```java
+package gxdxx.spring_basic;
+
+import lombok.Getter;
+import lombok.Setter;
+import lombok.ToString;
+
+@Getter
+@Setter
+@ToString
+public class HelloLombok {
+
+    private String name;
+    private int age;
+
+    public static void main(String[] args) {
+        HelloLombok helloLombok = new HelloLombok();
+        helloLombok.setName("gxdxx");
+
+        String name = helloLombok.getName();
+        System.out.println("name = " + name);
+
+        System.out.println("helloLombok = " + helloLombok);
+    }
+}
+```
+
+- getter, setter을 자동으로 annotation processing으로 만들어줌
+
+
+- @RequiredArgsConstructor
+- 필수값(final이 붙은)들을 생성자로 만들어준다. 
