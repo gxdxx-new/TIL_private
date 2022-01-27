@@ -20,6 +20,14 @@ public class ItemService {
         itemRepository.save(item);
     }
 
+    @Transactional
+    public void updateItem(Long itemId, String name, int price, int stockQuantity) {
+        Item findItem = itemRepository.findOne(itemId); // 트랜잭션 안에서 엔티티를 조회해야 영속성 상태로 조회되고 그 상태에서 값을 변경해야 더티체킹(변경감지)가 일어난다.
+        findItem.setName(name);
+        findItem.setPrice(price);
+        findItem.setStockQuantity(stockQuantity);
+    }
+
     public List<Item> findItems() {
         return itemRepository.findAll();
     }
