@@ -46,4 +46,10 @@ public class MemberService {
     public Member findOne(Long memberId) {
         return memberRepository.findOne(memberId);
     }
+
+    @Transactional  // jpa가 id로 영속성 컨텍스트나 db에서 찾아오고 member에 반환해준다. 영속 상태가 된 member의 name을 바꿔주고 종료되면 스프링 AOP가 동작하면서 @Transactional 어노테이션에 의해서 커밋이 되고 jpa가 플러쉬한다.
+    public void update(Long id, String name) {
+        Member member = memberRepository.findOne(id);
+        member.setName(name);
+    }
 }
