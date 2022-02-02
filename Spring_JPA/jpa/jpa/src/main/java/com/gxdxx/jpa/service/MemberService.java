@@ -2,8 +2,8 @@ package com.gxdxx.jpa.service;
 
 import com.gxdxx.jpa.domain.Member;
 import com.gxdxx.jpa.repository.MemberRepository;
+import com.gxdxx.jpa.repository.MemberRepositoryOld;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,12 +44,12 @@ public class MemberService {
     }
 
     public Member findOne(Long memberId) {
-        return memberRepository.findOne(memberId);
+        return memberRepository.findById(memberId).get();
     }
 
     @Transactional  // jpa가 id로 영속성 컨텍스트나 db에서 찾아오고 member에 반환해준다. 영속 상태가 된 member의 name을 바꿔주고 종료되면 스프링 AOP가 동작하면서 @Transactional 어노테이션에 의해서 커밋이 되고 jpa가 플러쉬한다.
     public void update(Long id, String name) {
-        Member member = memberRepository.findOne(id);
+        Member member = memberRepository.findById(id).get();
         member.setName(name);
     }
 }

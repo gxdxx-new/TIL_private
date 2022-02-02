@@ -1,11 +1,8 @@
 package com.gxdxx.jpa.service;
 
-import com.gxdxx.jpa.domain.Member;
 import com.gxdxx.jpa.domain.item.Book;
-import com.gxdxx.jpa.domain.item.Item;
 import com.gxdxx.jpa.exception.NotEnoughStockException;
 import com.gxdxx.jpa.repository.ItemRepository;
-import com.gxdxx.jpa.repository.MemberRepository;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.springframework.beans.factory.annotation.Autowired;
