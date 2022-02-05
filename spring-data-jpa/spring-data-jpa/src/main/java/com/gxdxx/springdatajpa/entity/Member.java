@@ -8,6 +8,11 @@ import javax.persistence.*;
 @Getter @Setter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)  // JPA가 프록시를 쓸 때를 위해 protected로 생성해놔야 한다.
 @ToString(of = {"id", "username", "age"})
+@NamedQuery(    // 실무에서 거의 사용안함, 애플리케이션 로딩 시점에 쿼리를 파싱해서 오류가 있으면 에러를 발생시킨다.
+        name = "Member.findByUsername",
+        query = "select m from Member m where m.username = :username"
+)
+@NamedEntityGraph(name = "Member.all", attributeNodes = @NamedAttributeNode("team"))
 public class Member {
 
     @Id @GeneratedValue
