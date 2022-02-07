@@ -1,5 +1,6 @@
 package com.gxdxx.springdatajpa.dto;
 
+import com.gxdxx.springdatajpa.entity.Member;
 import lombok.Data;
 
 @Data
@@ -14,4 +15,10 @@ public class MemberDto {
         this.username = username;
         this.teamName = teamName;
     }
+
+    public MemberDto(Member member) {
+        this.id = member.getId();
+        this.username = member.getUsername();
+    }
+
 }
