@@ -477,3 +477,225 @@ System.out.println(member.getOrders().getClass());
 class java.util.ArrayList
 class org.hibernate.collection.internal.PersistentBag
 ```
+
+# 회원 도메인 개발
+
+## 회원 리포지토리 개발
+
+```java
+package com.gxdxx.jpa.repository;
+
+import com.gxdxx.jpa.domain.Member;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Repository;
+
+import javax.persistence.EntityManager;
+import java.util.List;
+
+@Repository // 컴포넌트 스캔으로 인해 자동으로 스프링 빈으로 관리됨
+@RequiredArgsConstructor
+public class MemberRepositoryOld {
+
+    private final EntityManager em;   // 스프링이 엔티티 매니져를 만들어서 주입해준다.
+
+    public void save(Member member) {
+        em.persist(member);
+    }
+
+    public Member findOne(Long id) {
+        return em.find(Member.class, id);   // id에 맞는 member를 찾아서 반환해준다.
+    }
+
+    public List<Member> findAll() {
+        return em.createQuery("select m from Member m", Member.class)   // JPQL은 엔티티 객체를 대상으로 쿼리를 실행한다.
+                .getResultList();
+    }
+
+    public List<Member> findByName(String name) {
+        return em.createQuery("select m from Member m where m.name = :name", Member.class)  // 파라미터를 바인딩한다.
+                .setParameter("name", name)
+                .getResultList();
+    }
+}
+```
+
+#### @Repository
+- 컴포넌트 스캔에 의해 자동으로 스프링 빈으로 등록, JPA 예외를 스프링 기반 예외로 예외 변환한다.
+
+#### @PersistenceContext
+- 스프링 프레임워크는 실제 EntityManager를 주입하는 것이 아니라, 실제 EntityManager를 연결해주는 가짜 EntityManager를 주입해둔다.
+- 그리고 이 EntityManager를 호출하면, 현재 데이터베이스 트랜잭션과 관련된 실제 EntityManager를 호출해줍니다.
+
+#### JPQL
+- sql은 테이블을 대상으로 쿼리를 하지만, jpql은 엔티티 객체를 대상으로 쿼리를 한다.
+
+## 회원 서비스 개발
+
+```java
+package com.gxdxx.jpa.service;
+
+import com.gxdxx.jpa.domain.Member;
+import com.gxdxx.jpa.repository.MemberRepository;
+import com.gxdxx.jpa.repository.MemberRepositoryOld;
+import lombok.RequiredArgsConstructor;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+
+@Service
+@Transactional(readOnly = true) 
+@RequiredArgsConstructor
+public class MemberService {
+
+  private final MemberRepository memberRepository;
+
+  /**
+   * 회원 가입
+   */
+  @Transactional
+  public Long join(Member member) {
+    validateDuplicateMember(member);    // 중복 회원 검증
+    memberRepository.save(member);  // db에 저장되기 전이여도 id값이 생성됨
+    return member.getId();
+  }
+
+  private void validateDuplicateMember(Member member) {
+    List<Member> findMembers = memberRepository.findByName(member.getName());
+    if (!findMembers.isEmpty()) {
+      throw new IllegalStateException("이미 존재하는 회원입니다.");
+    }
+  }
+
+  // 회원 전체 조회
+  public List<Member> findMembers() {
+    return memberRepository.findAll();
+  }
+
+  public Member findOne(Long memberId) {
+    return memberRepository.findById(memberId).get();
+  }
+
+  @Transactional  // jpa가 id로 영속성 컨텍스트나 db에서 찾아오고 member에 반환해준다. 영속 상태가 된 member의 name을 바꿔주고 종료되면 스프링 AOP가 동작하면서 @Transactional 어노테이션에 의해서 커밋이 되고 jpa가 플러쉬한다.
+  public void update(Long id, String name) {
+    Member member = memberRepository.findById(id).get();
+    member.setName(name);
+  }
+  
+}
+```
+
+#### @RequiredArgsConstructor
+- final이 붙은 필드만 가지고 생성자를 만들어준다.
+
+#### @Transactional (스프링 어노테이션)
+- 모든 데이터 변경이나 로직은 트랜잭션 안에서 이루어져야 한다.
+- 데이터의 변경이 없는 읽기 전용 메서드에 readOnlye=true를 하면 영속성 컨텍스트를 플러시 하지 않아서 약간의 성능 향상이 있다.
+- 실행 중간에 오류가 발생하면 두 로직이 함께 롤백되어야 하기 때문에 서비스 계층에 둔다.
+
+  ```
+  Service {
+  
+    나의돈을 1000원 제거
+  
+    상대방에게 돈을 1000원 추가
+  
+  }
+  ```
+
+#### @Autowired
+- 생성자가 하나만 있는 경우엔 @Autowired가 없어도 스프링이 자동으로 주입해준다.
+
+```
+/**
+* 회원 가입
+**/
+@Transactional
+public Long join(Member member) {
+    validateDuplicateMember(member);    // 중복 회원 검증
+    memberRepository.save(member);  // db에 저장되기 전이여도 id값이 생성됨
+    return member.getId();
+}
+```
+
+- memberRepository.save(member); 에서 em.persist()를 하면 영속성 컨텍스트에 member 객체가 올라간다.
+- 그 때 영속성 컨텍스트의 key값이 member 객체의 PK(id값)가 된다.
+- @GeneratedValue로 인해 항상 id값이 생성되어 있는게 보장되기 때문에 아직 db에 들어간 시점이 아니여도 id값이 생성된다.
+- 실무에서는 검증 로직이 있어도 멀티 쓰레드 상황을 고려해서 회원 테이블의 회원명 컬럼에 유니크 제약 조건을 추가하는 것이 안전하다
+
+## 회원 기능 테스트
+
+#### 테스트 요구사항
+
+- 회원가입을 성공해야 한다.
+- 회원가입 할 때 중복된 이름이 있으면 예외가 발생해야 한다.
+
+```java
+package com.gxdxx.jpa.service;
+
+import com.gxdxx.jpa.domain.Member;
+import com.gxdxx.jpa.repository.MemberRepository;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.junit4.SpringRunner;
+import org.springframework.transaction.annotation.Transactional;
+
+import static org.junit.Assert.*;
+
+@RunWith(SpringRunner.class)
+@SpringBootTest
+@Transactional
+public class MemberServiceTest {
+
+
+    @Autowired MemberService memberService;
+    @Autowired MemberRepository memberRepository;
+
+    @Test
+    public void 회원가입() throws Exception {
+        //given
+        Member member = new Member();
+        member.setName("nam");
+
+        //when
+        Long saveId = memberService.join(member);
+
+        //then
+        assertEquals(member, memberRepository.findById(saveId).get()); // 같은 트랙잭션 내에서 id값이 같으면 같은 영속성 컨텍스트에서 하나로 관리된다.
+    }
+
+    @Test(expected = IllegalStateException.class)
+    public void 중복_회원_예외() throws Exception {
+        //given
+        Member member1 = new Member();
+        member1.setName("nam");
+
+        Member member2 = new Member();
+        member2.setName("nam");
+
+        //when
+        memberService.join(member1);
+        memberService.join(member2);    // 예외가 발생해야 한다.
+
+        //then
+        fail("예외가 발생해야 한다.");
+    }
+}
+```
+
+#### @RunWith(SpringRunner.class)
+- 스프링과 테스트를 통합한다.
+
+#### @SpringBootTest
+- 스프링 부트를 띄우고 테스트한다.
+- 없으면 @Autowired가 다 실패한다.
+
+#### @Transactional
+- 같은 트랙잭션에서 같은 엔티티(같은 id값)이면 영속성 컨텍스트에서 하나로 관리된다.
+- 데이터베이스 트랜잭션이 커밋하는 순간 플러시가 되면서 jpa 영속성 컨텍스트에 있는 객체가 db에 insert된다.
+- 각각의 테스트를 실행할 때마다 트랜잭션을 시작한다.
+- 테스트 케이스에선 insert 되지않고 롤백을 한다.(영속성 컨텍스트 flush를 하지 않는다.)
+
+
+
