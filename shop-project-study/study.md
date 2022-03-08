@@ -136,3 +136,397 @@ emf.close();    //6
 
 ## 상품 엔티티 설계
 
+#### 엔티티: db의 테이블에 대응하는 클래스
+
+#### @Entity가 붙은 클래스는 JPA에서 관리한다.
+
+```java
+package com.gxdxx.shop.constant;
+
+public enum ItemSellStatus {
+  SELL, SOLD_OUT
+}
+```
+
+- enum 클래스를 사용해 연관된 상수들을 모아둘 수 있다.
+- enum에 정의한 타입만 값을 가지도록 컴파일 시 체크할 수 있다.
+
+```java
+package com.gxdxx.shop.entity;
+
+import com.gxdxx.shop.constant.ItemSellStatus;
+import com.gxdxx.shop.dto.ItemFormDto;
+import com.gxdxx.shop.exception.OutOfStockException;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.ToString;
+
+import javax.persistence.*;
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "item")
+@Getter @Setter
+@ToString
+public class Item extends BaseEntity {
+
+  @Id @GeneratedValue(strategy = GenerationType.AUTO)
+  @Column(name = "item_id")
+  private Long id;    //상품 코드
+
+  @Column(nullable = false, length = 50)
+  private String itemName;    //상품명
+
+  @Column(nullable = false)
+  private int price;  //가격
+
+  @Column(nullable = false)
+  private int stockQuantity;  //재고 수량
+
+  @Lob
+  @Column(nullable = false)
+  private String itemDescription; //상품 상세 설명
+
+  @Enumerated(EnumType.STRING)
+  private ItemSellStatus itemSellStatus;  //상품 판매 상태
+  
+  private LocalDateTime registerTime;
+  
+  private LocalDateTime updateTime;
+  
+}
+```
+
+- 상품 정보로 상품코드, 가격, 상품명, 재고수량, 상품 상세 설명, 판매 상태를 갖는다.
+
+### 엔티티 매핑 관련 어노테이션
+
+|어노테이션|설명|
+|---|---|
+|@Entity|클래스를 엔티티로 선언|
+|@Table|엔티티와 매핑할 테이블을 지정|
+|@Id|테이블의 기본키에 사용할 속성을 지정|
+|@GeneratedValue|키 값을 생성하는 전략 명시|
+|@Column|필드와 컬럼 매핑|
+|@Lob|BLOB, CLOB 타입 매핑|
+|@CreationTimestamp|insert 시 시간 자동 저장|
+|@UpdateTimestamp|update 시 시간 자동 저장|
+|@Enumerated|enum 타입 매핑||
+|@Transient|해당 필드 데이터베이스 매핑 무시|
+|@Temporal|날짜 타입 매핑|
+|@CreateDate|엔티티가 생성되어 저장될 때 시간 자동 저장|
+|@LastModifiedDate|조회한 엔티티의 값을 변경할 때 시간 자동 저장|
+
+#### CLOB와 BLOB의 의미
+
+- CLOB: 문자형 댕대용량 파일을 외부 파일로 저장할 때 사용하는 데이터 타입
+- BLOB: 멀티미디어 데이터(바이너리 데이터)를 외부 파일로 저장할 때 사용하는 데이터 타입
+
+### @Column 어노테이션 추가 속성
+
+|속성| 설명                                                             | 기본값       |
+|---|----------------------------------------------------------------|-----------|
+|name| 필드와 매핑할 컬럼의 이름 설정                                              | 객체의 필드 이름 |
+|unique(DDL)| 유니크 제약 조건 설정                                                   ||
+|insertable| insert 가능 여부                                                   | true      |
+|updatable| update 가능 여부                                                   | true      |
+|length| String 타입의 문자 길이 제약조건 설정                                       |255|
+|nullable(DDL)| - null 값의 허용 여부 설정<br/>- false 설정 시 DDL 생성 시에 not null 제약조건 추가 ||
+|columnDefinition|db 컬럼 정보 직접 기술||
+
+### @GeneratedValue 어노테이션 기본키 생성 전략
+
+|생성 전략|설명|
+|---|---|
+|GenerationType.AUTO (default)|JPA 구현체가 자동으로 생성 전략 결정|
+|GenerationType.IDENTIFY|기본키 생성을 데이터베이스에 위임|
+|GenerationType.SEQUENCE|데이터베이스 시퀀스 오브젝트를 이용한 기본키 생성|
+|GenerationType.TABLE|키 생성용 테이블 사용|
+
+- @GenerationType.AUTO를 사용하면 데이터베이스에 의존하지 않고 기본키를 할당한다.
+- JPA 구현체가 IDENTIFY, SEQUENCE, TABLE 생성 전략 중 하나를 자동으로 선택하기 때문에 db가 변경되도 코드를 수정할 필요가 없다.
+
+## 상품 리포지터리 설계
+
+#### Spring Data JPA는 엔티티 매니저를 직접 이용한다.
+
+#### 대신 Data Access Object의 역할을 하는 Repository 인터페이스를 설계한 후 사용한다.
+
+#### 인터페이스만 설계하면 런타임 시점에 자바의 Dynamic Proxy를 이용해 객체를 동적으로 생성해준다.
+
+```java
+package com.gxdxx.shop.repository;
+
+import com.gxdxx.shop.entity.Item;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface ItemRepository extends JpaRepository<Item, Long> {
+    
+}
+```
+
+- JpaRepository는 2개의 제네릭 타입을 사용한다.
+- 첫 번쨰에 엔티티 타입 클래스를 넣고, 두 번째에 기본키 타입을 넣어준다.
+
+### JpaRepository에서 지원하는 메소드 예시
+
+#### JpaRepository는 기본적인 CRUD 및 페이징 처리를 위한 메소드가 정의되어 있다.
+
+|메소드|기능|
+|---|---|
+|<S extends T> save(S entity)|엔티티 저장 및 수정|
+|void delete(T entity)|엔티티 삭제|
+|count()|엔티티 총 개수 반환|
+|Iterable<T> findAll()|모든 엔티티 조회|
+
+### 상품 저장 테스트
+
+```java
+package com.gxdxx.shop.repository;
+
+...
+
+@SpringBootTest // 1
+@TestPropertySource(locations="classpath:application-test.properties")  // 2
+class ItemRepositoryTest {
+    
+    @Autowired
+    ItemRepository itemRepository;  // 3
+
+    @Test   // 4
+    @DisplayName("상품 저장 테스트")   // 5
+    public void saveItemTest() {
+        Item item = new Item();
+        item.setItemName("테스트 상품");
+        item.setPrice(10000);
+        item.setStockQuantity(100);
+        item.setItemDescription("테스트 상품 상세 설명");
+        item.setItemSellStatus(ItemSellStatus.SELL);
+        item.setRegisterTime(LocalDateTime.now());
+        item.setUpdateTime(LocalDateTime.now());
+        Item savedItem = itemRepository.save(item);
+        System.out.println(savedItem.toString());
+    }
+}
+```
+
+1. 통합 테스트를 위해 스프링 부트에서 제공하는 어노테이션. 실제 애플리케이션을 구동할 때처럼 모든 Bean을 IoC 컨테이너에 등록
+2. 테스트 코드 실행 시 applicaiton-test.properties에 더 높은 우선순위 부여
+3. ItemRepository를 사용하기 위해 @Autowired 어노테이션을 이용해 Bean 주입
+4. 테스트할 메소드 위에 선언해 해당 메소드를 테스트 대상으로 지정
+5. Junit5에 추가된 어노테이션. 테스트 코드 실행 시 @DisplayName에 지정한 테스트명이 노출
+
+## 쿼리 메소드
+
+#### find + (엔티티 이름) + By + 변수이름
+
+```java
+package com.gxdxx.shop.repository;
+
+import com.gxdxx.shop.entity.Item;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface ItemRepository extends JpaRepository<Item, Long> {
+    
+    List<Item> findByItemName(String itemName);
+    
+    List<Item> findByItemNameOrItemDescription(String itemName, String itemDescription);
+    
+    List<Item> findByPriceLessThan(Integer price);
+    
+    List<Item> findByPriceLessThanOrderByPriceDesc(Integer price);
+    
+}
+```
+
+- 엔티티명은 생략이 가능하다.
+- 매개 변수로는 검색할 때 사용할 데이터를 넘겨준다.
+
+## @Query 어노테이션
+
+#### 쿼리 메소드는 간단한 처리를 할 때는 유용하지만 복잡한 쿼리를 다루기에는 적합하지 않다.
+
+#### @Qeury는 JPQL이라는 객체지향 쿼리 언어를 통해 복잡한 쿼리를 처리해준다.
+
+#### JPQL은 엔티티 객체를 대상으로 쿼리를 수행하고 특정 db의 sql에 의존하지 않는다.
+
+```java
+package com.gxdxx.shop.repository;
+
+import com.gxdxx.shop.entity.Item;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface ItemRepository extends JpaRepository<Item, Long> {
+    
+    ...
+  
+    @Query("select i from Item i where i.itemDescription like " +
+            "%:itemDescription% order by i.price desc")
+    List<Item> findByItemDescription(@Param("itemDescription") String itemDescription); // 1
+    
+}
+```
+
+1. @Param 어노테이션을 이용해 파라미터로 넘어온 값을 JPQL에 들어갈 변수로 지정해준다.
+
+## Querydsl
+
+#### @Query 어노테이션을 이용하면 JPQL 문법으로 문자열을 입력하기 때문에 컴파일 시점에 에러를 발견할 수 없다.
+
+#### Querydsl은 JPQL을 코드로 작성할 수 있도록 도와주는 빌더 API이다.
+
+### Querydsl 장점
+
+- 고정된 SQL문이 아닌 조건에 맞게 동적으로 쿼리를 생성할 수 있다.
+- 비슷한 쿼리를 재사용할 수 있고 제약 조건 조립 및 가독성을 향상시킬 수 있다.
+- 문자열이 아닌 자바 소스코드로 작성하기 때문에 컴파일 시점에 오류를 발견할 수 있다.
+- IDE의 도움을 받아서 자동 완성 기능을 이용할 수 있기 때문에 생산성을 향상시킬 수 있다.
+
+### JPAQueryFactory 이용한 상품 조회 테스트
+
+```java
+package com.gxdxx.shop.repository;
+
+...
+
+@SpringBootTest
+@TestPropertySource(locations="classpath:application-test.properties")
+class ItemRepositoryTest {
+    
+    @Autowired
+    EntityManager em;   // 1
+
+    @Test
+    @DisplayName("Querydsl 조회 테스트1")
+    public void queryDslTest() {
+        this.createItemList();
+        JPAQueryFactory queryFactory = new JPAQueryFactory(em); // 2
+        QItem qItem = QItem.item;   // 3
+        JPAQuery<Item> query = queryFactory.selectFrom(qItem)
+                .where(qItem.itemSellStatus.eq(ItemSellStatus.SELL))
+                .where(qItem.itemDescription.like("%" + "테스트 상품 상세 설명" + "%"))
+                .orderBy(qItem.price.desc());
+  
+        List<Item> itemList = query.fetch();    // 4
+  
+        for (Item item : itemList) {
+            System.out.println(item.toString());
+        }
+    }
+    
+}
+```
+
+1. 영속성 컨텍스트를 사용하기 위해 @PersistenceContext 어노테이션을 이용해 EntityManager 빈을 주입한다.
+2. JPAQueryFactory를 이용해 쿼리를 동적으로 생성한다. 생성자의 파라미터로는 EntityManager 객체를 넣어준다.
+3. Querydsl을 통해 쿼리를 생성하기 위해 플러그인을 통해 자동으로 생성된 QItem 객체를 이용한다.
+4. JPAQeury 메소드인 fetch를 이용해 쿼리 결과를 리스트로 반환한다. fetch() 실행 시점에 쿼리문이 실행된다.
+
+#### JPAQuery 데이터 반환 메소드
+
+|메소드|기능|
+|---|---|
+|List<T> fetch()|조회 결과 리스트 반환|
+|T fetchOne|조회 대상이 1건인 경우 제네릭으로 지정한 타입 반환|
+|T fetchFirst()|조회 대상 중 1건만 반환|
+
+### QuerydslPredicateExecutor 이용한 상품 조회 테스트
+
+```java
+package com.gxdxx.shop.repository;
+
+...
+
+public interface ItemRepository extends JpaRepository<Item, Long>, QuerydslPredicateExecutor<Item> {
+    
+    ...
+
+}
+```
+
+- Repository에 Predicate를 파라미터로 전달하기 위해 QueryDslPredicateExecutor 인터페이스를 상속 받는다.
+
+```java
+package com.gxdxx.shop.repository;
+
+....
+
+@SpringBootTest
+@TestPropertySource(locations="classpath:application-test.properties")
+class ItemRepositoryTest {
+    
+    ...
+
+    public void createItemList2() {
+        for (int i = 1; i <= 5; i++) {
+            Item item = new Item();
+            item.setItemName("테스트 상품" + i);
+            item.setPrice(10000 + i);
+            item.setStockQuantity(100);
+            item.setItemDescription("테스트 상품 상세 설명" + i);
+            item.setItemSellStatus(ItemSellStatus.SELL);
+            item.setRegisterTime(LocalDateTime.now());
+            item.setUpdateTime(LocalDateTime.now());
+            Item savedItem = itemRepository.save(item);
+        }
+
+        for (int i = 6; i <= 10; i++) {
+            Item item = new Item();
+            item.setItemName("테스트 상품" + i);
+            item.setPrice(10000 + i);
+            item.setStockQuantity(0);
+            item.setItemDescription("테스트 상품 상세 설명" + i);
+            item.setItemSellStatus(ItemSellStatus.SOLD_OUT);
+            item.setRegisterTime(LocalDateTime.now());
+            item.setUpdateTime(LocalDateTime.now());
+            Item savedItem = itemRepository.save(item);
+        }
+    }
+
+    @Test
+    @DisplayName("상품 Querydsl 조회 테스트 2")
+    public void queryDslTest2() {
+
+        this.createItemList2();
+
+        BooleanBuilder booleanBuilder = new BooleanBuilder();   // 1
+        QItem item = QItem.item;
+        String itemDescription = "테스트 상품 상세 설명";
+        int price = 10003;
+        String itemSellStatus = "SELL";
+
+        booleanBuilder.and(item.itemDescription.like("%" + itemDescription + "%")); // 2
+        booleanBuilder.and(item.price.gt(price));
+
+        if (StringUtils.equals(itemSellStatus, ItemSellStatus.SELL)) {
+            booleanBuilder.and(item.itemSellStatus.eq(ItemSellStatus.SELL));
+        }
+
+        Pageable pageable = PageRequest.of(0, 5);   // 3
+        Page<Item> itemPagingResult = itemRepository.findAll(booleanBuilder, pageable); // 4
+        System.out.println("total elements : " + itemPagingResult.getTotalElements());
+
+        List<Item> resultItemList = itemPagingResult.getContent();
+        for (Item resultItem : resultItemList) {
+            System.out.println(resultItem.toString());
+        }
+    }
+
+}
+```
+
+1. BooleanBuilder는 쿼리에 들어갈 조건을 만들어주는 빌더이다. Predicate를 구현하고 있고 메소드 체인 형식으로 사용할 수 있다.
+2. 필요한 상품을 조회하는데 필요한 "and" 조건을 추가한다.
+3. 데이터를 페이징해 조회하도록 PageRequest.of() 메소드를 이용해 Pageble 객체를 생성한다. 조회할 페이지 번호, 한 페이지당 조회할 데이터 개수를 넣어준다.
+4. QueryDslPredicateExecutor 인터페이스에서 정의한 findAll() 메소드를 이용해 조건에 맞는 데이터를 Page 객체로 받아온다.
+
+#### QueryDslPredicateExecutor 인터페이스 정의 메소드
+
+|메소드|기능|
+|---|---|
+|long count(Predicate)|조건에 맞는 데이터의 총 개수 반환|
+|boolean exists(Predicate)|조건에 맞는 데이터 존재 여부 반환|
+|Iterable findAll(Predicate)|조건에 맞는 모든 데이터 반환|
+|Page<T> findAll(Predicate, Pageable)|조건에 맞는 페이지 데이터 반환|
+|Iterable findAll(Predicate, Sort)|조건에 맞는 정렬된 데이터 반환|
+|T findOne(Predicate)|조건에 맞는 데이터 1개 반환|
