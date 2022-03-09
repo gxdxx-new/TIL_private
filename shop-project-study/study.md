@@ -530,3 +530,540 @@ class ItemRepositoryTest {
 |Page<T> findAll(Predicate, Pageable)|조건에 맞는 페이지 데이터 반환|
 |Iterable findAll(Predicate, Sort)|조건에 맞는 정렬된 데이터 반환|
 |T findOne(Predicate)|조건에 맞는 데이터 1개 반환|
+
+---
+
+## 스프링 시큐리티
+
+#### 스프링 시큐리티는 스프링 기반의 애플리케이션을 위한 보안 솔루션을 제공한다.
+
+#### 인증: 요청에 대해 작업을 수행할 수 있는 주체인지 확인 ex) 로그인
+
+#### 인가: 인증 과정 이후 발생, 권한 여부를 확인 ex) 관리자 페이지에 접근
+
+### 스프링 시큐리티 설정
+
+```java
+package com.gxdxx.shop.config;
+
+import com.gxdxx.shop.service.MemberService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.authentication.builders.AuthenticationManagerBuilder;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.builders.WebSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
+
+@Configuration
+@EnableWebSecurity  // 1
+public class SecurityConfig extends WebSecurityConfigurerAdapter {  // 2
+
+    @Autowired
+    MemberService memberService;
+
+    @Override
+    protected void configure(HttpSecurity http) throws Exception {  // 3
+        http.formLogin()
+                .loginPage("/members/login")
+                .defaultSuccessUrl("/")
+                .usernameParameter("email")
+                .failureUrl("/members/login/error")
+                .and()
+                .logout()
+                .logoutRequestMatcher(new AntPathRequestMatcher("/members/logout"))
+                .logoutSuccessUrl("/");
+
+        http.authorizeRequests()
+                .mvcMatchers("/", "/members/**",
+                                "/item/**", "/images/**").permitAll()
+                .mvcMatchers("/admin/**").hasRole("ADMIN")
+                .anyRequest().authenticated();
+
+        http.exceptionHandling()
+                .authenticationEntryPoint((new CustomAuthenticationEntryPoint()));
+    }
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {  // 4
+        return new BCryptPasswordEncoder();
+    }
+
+    @Override
+    protected void configure(AuthenticationManagerBuilder auth) throws Exception {
+        auth.userDetailsService(memberService)
+                .passwordEncoder(passwordEncoder());
+    }
+
+    @Override
+    public void configure(WebSecurity web) throws Exception {
+        web.ignoring().antMatchers("/css/**", "/js/**", "/img/**");
+    }
+
+}
+```
+
+1. WebSecurityConfigurerAdapter를 상속받는 클래스에 @EnableWebSecurity 어노테이션을 선언하면 SpringSecurityFilterChain이 자동으로 포함된다.
+2. WebSecurityConfigurerAdapter를 상속받아 메소드 오버라이딩을 통해 보안 설정을 커스터마이징할 수 있다.
+3. http 요청에 대한 보안을 설정한다. 페이지 권한 설정, 로그인 페이지 설정, 로그아웃 메소드 등에 대한 설정을 작성한다.
+4. BCryptPasswordEncoder의 해시 함수를 이용해 비밀번호를 암호화하여 저장한다. 
+
+## 회원 가입 기능 구현하기
+
+```java
+package com.gxdxx.shop.constant;
+
+public enum Role {
+    USER, ADMIN
+}
+```
+
+- 일반 유저, 관리자를 구분하기 위해 enum 클래스에 모아놨다.
+
+#### MemberFormDto
+
+```java
+package com.gxdxx.shop.dto;
+
+...
+
+@Getter @Setter
+public class MemberFormDto {
+
+  @NotBlank(message = "이름은 필수 입력 값입니다.")
+  private String name;
+
+  @NotEmpty(message = "이메일은 필수 입력 값입니다.")
+  @Email(message = "이메일 형식으로 입력해주세요.")
+  private String email;
+
+  @NotEmpty(message = "비밀번호는 필수 입력 값입니다.")
+  @Length(min = 8, max = 16, message = "비밀번호는 8자 이상, 16자 이하로 입력해주세요.")
+  private String password;
+
+  @NotEmpty(message = "주소는 필수 입력 값입니다.")
+  private String address;
+
+}
+```
+
+- 회원 가입 화면으로부터 넘어오는 가입 정보를 담을 DTO를 생성한다.
+
+#### javax.validation 어노테이션
+
+|어노테이션|설명|
+|@NotEmpty|NULL 체크 및 문자열의 경우 길이 0인지 검사|
+|@NotBlank|Null 체크 및 문자열의 경우 길이 0 및 빈 문자열(" ") 검사|
+|@Length(min=, max=)|최소, 최대 길이 검사|
+|@Email|이메일 형식인지 검사|
+|@Max(숫자)|지정한 값보다 작은지 검사|
+|@Min(숫자)|지정한 값보다 큰지 검사|
+|@Null|값이 NULL인지 검사|
+|@NotNULL|값이 NULL이 아닌지 검사|
+
+#### Member 엔티티
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@Entity
+@Table(name="member")
+@Getter @Setter
+@ToString
+public class Member extends BaseEntity {
+
+    @Id @GeneratedValue(strategy = GenerationType.AUTO)
+    @Column(name = "member_id")
+    private Long id;
+
+    private String name;
+
+    @Column(unique = true)  // 1
+    private String email;
+
+    private String password;
+
+    private String address;
+
+    @Enumerated(EnumType.STRING)    // 2
+    private Role role;
+
+    public static Member createMember(MemberFormDto memberFormDto, PasswordEncoder passwordEncoder) {   // 3
+        Member member = new Member();
+        member.setName(memberFormDto.getName());
+        member.setEmail(memberFormDto.getEmail());
+        member.setAddress(memberFormDto.getAddress());
+        String password = passwordEncoder.encode(memberFormDto.getPassword());  // 4
+        member.setPassword(password);
+        member.setRole(Role.ADMIN);
+        return member;
+    }
+
+}
+```
+
+1. 회원은 이메일을 통해 유일하게 구분해야 하기 때문에, 동일한 값이 db에 들어올 수 없도록 unique 속성을 지정
+2. "EnumType.STRING" 옵션으로 enum의 순서 상관없이 저장되도록 지정
+3. Member 엔티티에 회원 생성하는 메소드를 만들어 관리
+4. BCryptPasswordEncoder Bean을 파라미터로 받아 비밀번호를 암호화
+
+#### MemberRepository
+
+```java
+package com.gxdxx.shop.repository;
+
+...
+
+public interface MemberRepository extends JpaRepository<Member, Long> {
+
+    Member findByEmail(String email);   // 1
+
+}
+```
+
+1. 회원 가입 시 중복된 회원이 있는지 검사하기 위해 이메일로 회원을 검사할 수 있도록 쿼리 메소드 작성
+
+#### MemberService
+
+```java
+package com.gxdxx.shop.service;
+
+...
+
+@Service
+@Transactional  // 1
+@RequiredArgsConstructor    // 2
+public class MemberService implements UserDetailsService {
+
+    private final MemberRepository memberRepository;    // 3
+
+    public Member saveMember(Member member) {
+        validateDuplicateMember(member);
+        return memberRepository.save(member);
+    }
+
+    private void validateDuplicateMember(Member member) {   // 4
+        Member findMember = memberRepository.findByEmail(member.getEmail());
+        if (findMember != null) {
+            throw new IllegalStateException("이미 가입된 회원입니다.");
+        }
+    }
+    
+
+}
+```
+
+1. 비즈니스 로직을 담당하는 서비스 계층 클래스에 @Transactional 어노테이션 선언하면 로직을 처리하다 에러 발생했을 때 변경된 데이터를 로직을 수행하기 이전 상태로 롤백
+    - 테스트 클래스에 선언하면 테스트 실행 후 롤백 처리
+2. final이나 @NonNull이 붙은 필드에 생성자를 생성해줌
+3. 빈에 생성자가 1개이고 생성자의 파라미터 타입이 빈으로 등록 가능하면 @Autowired 생략 가능
+4. 이미 가입된 회원이면 IllegalStateException 예외 발생
+
+#### MemberController
+
+```java
+package com.gxdxx.shop.controller;
+
+...
+
+@RequestMapping("/members")
+@Controller
+@RequiredArgsConstructor
+public class MemberController {
+
+    private final MemberService memberService;
+    private final PasswordEncoder passwordEncoder;
+
+    @GetMapping(value = "/new")
+    public String memberForm(Model model) {
+        model.addAttribute("memberFormDto", new MemberFormDto());
+        return "member/memberForm";
+    }
+
+    @PostMapping(value = "/new")
+    public String memberForm(@Valid MemberFormDto memberFormDto, BindingResult bindingResult, Model model) {    // 1
+
+        if (bindingResult.hasErrors()) {    // 2
+            return "member/memberForm";
+        }
+
+        try {
+            Member member = Member.createMember(memberFormDto, passwordEncoder);
+            memberService.saveMember(member);
+        } catch (IllegalStateException e) {
+            model.addAttribute("errorMessage", e.getMessage()); // 3
+            return "member/memberForm";
+        }
+
+        return "redirect:/";
+    }
+
+    @GetMapping(value = "/login")
+    public String loginMember() {
+        return "/member/memberLoginForm";
+    }
+
+    @GetMapping(value = "/login/error")
+    public String loginError(Model model) {
+        model.addAttribute("loginErrorMessage", "아이디 또는 비밀번호를 확인해주세요.");
+        return "member/memberLoginForm";
+    }
+
+}
+```
+
+1. 검증하려는 객체 앞에 @Valid 어노테이션을 선언하고 파라미터로 bindingResult 객체를 추가한다. 검사 후 결과는 bindingResult에 담긴다.
+2. bindingResult.hasErrors()를 호출해 에러가 있으면 회원가입 페이지로 이동한다.
+
+## 로그인 / 로그아웃 구현
+
+#### UserDetailsService
+
+- db에서 회원 정보를 가져오는 역할을 한다.
+- ladUserByUsername() 메소드는 회원 정보를 조회해 사용자의 정보와 권한을 갖는 UserDetils 인터페이스를 반환한다.
+
+#### UserDetails
+
+- 회원의 정보를 담기 위해 사용하는 인터페이스이다.
+- 직접 구현하거나 스프링 시큐리티에서 제공하는 User 클래스를 사용한다.
+- User 클래스는 UserDetails 인터페이스를 구현하고 있는 클래스이다.
+
+```java
+package com.gxdxx.shop.service;
+
+...
+
+@Service
+@Transactional
+@RequiredArgsConstructor
+public class MemberService implements UserDetailsService {  // 1
+    
+    ...
+
+    @Override
+    public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {  // 2
+        Member member = memberRepository.findByEmail(email);
+
+        if (member == null) {
+            throw new UsernameNotFoundException(email);
+        }
+
+        return User.builder()   // 3
+                .username(member.getEmail())
+                .password(member.getPassword())
+                .roles(member.getRole().toString())
+                .build();
+    }
+
+}
+```
+
+1. MemberService가 UserDetailsService를 구현
+2. UserDetailsService 인터페이스의 loadUserByUsername() 메소드를 오버라이딩, 로그인할 유저의 이메일을 파라미터로 전달받음
+3. UserDetails를 구현하고 있는 User 객체를 반환
+
+#### SecurityConfig
+
+```java
+package com.gxdxx.shop.config;
+
+...
+
+@Configuration
+@EnableWebSecurity
+public class SecurityConfig extends WebSecurityConfigurerAdapter {
+
+    @Autowired
+    MemberService memberService;
+
+    @Override
+    protected void configure(HttpSecurity http) throws Exception {
+        http.formLogin()
+                .loginPage("/members/login")    // 1
+                .defaultSuccessUrl("/") // 2
+                .usernameParameter("email") // 3
+                .failureUrl("/members/login/error") // 4
+                .and()
+                .logout()
+                .logoutRequestMatcher(new AntPathRequestMatcher("/members/logout")) // 5
+                .logoutSuccessUrl("/"); // 6
+
+        http.authorizeRequests()    // 7
+                .mvcMatchers("/", "/members/**",
+                                "/item/**", "/images/**").permitAll()   // 8
+                .mvcMatchers("/admin/**").hasRole("ADMIN")  // 9
+                .anyRequest().authenticated();  // 10
+
+        http.exceptionHandling()
+                .authenticationEntryPoint((new CustomAuthenticationEntryPoint()));  // 11
+    }
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    @Override
+    protected void configure(AuthenticationManagerBuilder auth) throws Exception {  // 12
+        auth.userDetailsService(memberService)
+                .passwordEncoder(passwordEncoder());    // 13
+    }
+
+    @Override
+    public void configure(WebSecurity web) throws Exception {
+        web.ignoring().antMatchers("/css/**", "/js/**", "/img/**"); // 14
+    }
+
+}
+```
+
+1. 로그인 페이지 URL 설정
+2. 로그인 성공시 이동할 URL
+3. 로그인 시 사용할 파라미터 이름으로 email 지정
+4. 로그인 실패 시 이동할 URL
+5. 로그아웃 URL
+6. 로그아웃 성공시 이동할 URL
+7. 시큐리티 처리에 HttpServletRequest를 이용
+8. permitAll()을 통해 모든 사용자가 인증(로그인) 없이 해당 경로에 접근할 수 있도록 설정
+9. /admin 으로 시작하는 경로는 해당 계정이 ADMIN Role일 경우에만 접근 가능하도록 설정
+10. 8, 9에서 설정해준 경로를 제외한 나머지 경로들은 모두 인증을 요구하도록 설정
+11. 인증되지 않은 사용자가 리소스에 접근했을 때 수행되는 핸들러를 등록
+12. 스프링 시큐리티에서 인증은 AuthenticationManager를 통해 이루어지는데 AuthenticationManagerBuilder가 AuthenticationManager를 생성
+13. userDetailsService를 구현하고 있는 객체로 memberService를 지정하고, 비밀번호 암호화를 위해 passwordEncoder를 지정
+14. static 디렉터리 하위 파일은 인증 무시하도록 설정
+      - antMatchers, mvcMatchers 차이
+        - antMatchers(”/info”)은 /info URL과 매핑 되지만 mvcMatchers(”/info”)은 /info/, /info.html 이 매핑 가능
+
+#### CustomAuthenticationEntryPoint
+
+```java
+package com.gxdxx.shop.config;
+
+...
+
+public class CustomAuthenticationEntryPoint implements AuthenticationEntryPoint {
+
+    @Override
+    public void commence(HttpServletRequest request, HttpServletResponse response, AuthenticationException authException) throws IOException, ServletException {
+        response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized");
+    }
+
+}
+```
+
+- 인증되지 않은 사용자가 리소스를 요청할 경우 "Unauthorized" 에러를 발생하도록 AuthenticationEntryPoint 인터페이스를 구현
+
+### 로그인 / 로그아웃 테스트
+
+```java
+package com.gxdxx.shop.controller;
+
+...
+
+@SpringBootTest
+@AutoConfigureMockMvc   // 1
+@Transactional
+@TestPropertySource(locations = "classpath:application-test.properties")
+public class MemberControllerTest {
+
+    @Autowired
+    private MemberService memberService;
+
+    @Autowired
+    private MockMvc mockMvc;    // 2
+
+    @Autowired
+    PasswordEncoder passwordEncoder;
+
+    public Member createMember(String email, String password) { // 3
+        MemberFormDto memberFormDto = new MemberFormDto();
+        memberFormDto.setEmail(email);
+        memberFormDto.setName("홍길동");
+        memberFormDto.setAddress("경북 경산시 대동");
+        memberFormDto.setPassword(password);
+        Member member = Member.createMember(memberFormDto, passwordEncoder);
+        return memberService.saveMember(member);
+    }
+
+    @Test
+    @DisplayName("로그인 성공 테스트")
+    public void loginSuccessTest() throws Exception {
+        String email = "test@email.com";
+        String password = "1234";
+        this.createMember(email, password);
+
+        mockMvc.perform(formLogin().userParameter("email")
+                .loginProcessingUrl("/members/login")   // 4
+                .user(email).password(password))
+                .andExpect(SecurityMockMvcResultMatchers.authenticated());  // 5
+    }
+
+    @Test
+    @DisplayName("로그인 실패 테스트")
+    public void loginFailTest() throws Exception {
+        String email = "test@email.com";
+        String password = "1234";
+        this.createMember(email, password);
+
+        mockMvc.perform(formLogin().userParameter("email")
+                .loginProcessingUrl("/members/login")
+                .user(email).password("12345"))
+                .andExpect(SecurityMockMvcResultMatchers.unauthenticated());
+    }
+
+}
+```
+
+1. MockMvc 테스트를 위해 @AutoConfigureMockMvc 어노테이션을 선언
+2. MockMvc 클래스를 이용해 실제 객체와 비슷하지만 테스트에 필요한 기능만 가지는 가짜 객체 생성, 이를 이용해 웹 브라우저에서 요청을 하는 것처럼 테스트 가능
+3. 로그인 전 회원 등록 메소드
+4. userParameter() 를 이용해 이메일을 아이디로 세팅하고 로그인 URL에 요청
+5. 로그인이 성공해 인증되었으면 테스트 통과
+
+#### 유저 접근 권한 테스트
+
+```java
+package com.gxdxx.shop.controller;
+
+...
+
+@SpringBootTest
+@AutoConfigureMockMvc
+@TestPropertySource(locations = "classpath:application-test.properties")
+class ItemControllerTest {
+
+    @Autowired
+    MockMvc mockMvc;
+
+    @Test
+    @DisplayName("상품 등록 페이지 관리자 접근 테스트")
+    @WithMockUser(username = "admin", roles = "ADMIN")  // 1
+    public void itemFormTest() throws Exception {
+        mockMvc.perform(MockMvcRequestBuilders.get("/admin/item/new"))  // 2
+                .andDo(print()) // 3
+                .andExpect(status().isOk());    // 4
+    }
+
+    @Test
+    @DisplayName("상품 등록 페이지 일반 회원 접근 테스트")
+    @WithMockUser(username = "user", roles = "USER")
+    public void itemFormNotAdminTest() throws Exception {
+        mockMvc.perform(MockMvcRequestBuilders.get("/admin/item/new"))
+                .andDo(print())
+                .andExpect(status().isForbidden()); // 5
+    }
+
+}
+```
+
+1. 현재 회원의 이름이 admin, role이 ADMIN인 유저가 로그인된 상태로 테스트를 할 수 있도록 해주는 어노테이션
+2. 상품 등록 페이지에 get 요청을 보냄
+3. 요청과 응답 메시지를 확인할 수 있도록 콘솔창에 출력
+4. 응답 상태 코드가 정상인지 확인
+5. 상품 등록 페이지 진입 요청 시 Forbidden 예외가 발생하면 테스트가 성공적으로 통과
