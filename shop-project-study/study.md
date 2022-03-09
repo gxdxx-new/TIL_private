@@ -1067,3 +1067,182 @@ class ItemControllerTest {
 3. 요청과 응답 메시지를 확인할 수 있도록 콘솔창에 출력
 4. 응답 상태 코드가 정상인지 확인
 5. 상품 등록 페이지 진입 요청 시 Forbidden 예외가 발생하면 테스트가 성공적으로 통과
+
+---
+
+## 연관 관계 매핑
+
+### 연관 관계 매핑 종류
+
+- 일대일(1:1): @OneToOne
+- 일대다(1:N): @OneToMany
+- 다대일(N:1): @ManyToOne
+- 다대다(N:M): @ManyToMany
+
+#### 엔티티를 매핑할 때는 방향성을 고려해야 한다.
+#### 테이블에서 관계는 항상 양방향이지만, 객체에서는 단방향과 양방향이 존재한다.
+
+### 일대일 단방향 매핑
+
+#### 회원 - 장바구니 ERD
+
+<img src="https://user-images.githubusercontent.com/35963403/157388128-9d690dbd-7f5a-403e-adbb-b6df044ae4dd.PNG" width="400">
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@Entity
+@Table(name = "cart")
+@Getter @Setter
+@ToString
+public class Cart extends BaseEntity {
+
+    @Id @GeneratedValue(strategy = GenerationType.AUTO)
+    @Column(name = "cart_id")
+    private Long id;
+
+    @OneToOne(fetch = FetchType.LAZY)  // 1
+    @JoinColumn(name = "member_id") // 2
+    private Member member;
+    
+}
+```
+
+1. @OneToOne 어노테이션을 이용해 회원 엔티티와 일대일로 매핑한다.
+2. @JoinColumn 어노테이션을 이용해 매핑할 외래키를 지정한다. name 속성에는 매핑할 외래키의 이름을 설정한다.
+
+- Member 엔티티를 보면 Cart 엔티티와 관련된 소스가 전혀 없다. 즉, Cart 엔티티가 Member 엔티티를 일방적으로 참조하고 있다.
+- 이렇게 일대일 단방향 매핑을 맺어주면 Cart 엔티티를 조회하면서 Member 엔티티의 정보도 동시에 가져올 수 있는 장점이 있다.
+
+### 다대일 단방향 매핑
+
+#### 장바구니 - 장바구니 상품 - 상품 ERD
+
+<img src="https://user-images.githubusercontent.com/35963403/157390837-e6b6469d-2b4d-48fa-ade1-8ac7a739160a.PNG" width="400">
+
+- 하나의 장바구니에는 여러 개의 상품들이 들어갈 수 있다.
+- 또한 같은 상품을 여러 개 주문할 수도 있으므로 몇 개를 담아 줄건지도 설정해줘야 한다.
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@Entity
+@Getter @Setter
+@ToString
+public class CartItem extends BaseEntity {
+
+    @Id @GeneratedValue
+    @Column(name = "cart_item_id")
+    private Long id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "cart_id")
+    private Cart cart;  // 1
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "item_id")
+    private Item item;  // 2
+
+    private int count;  // 3
+    
+}
+```
+
+1. 하나의 장바구니에는 여러 개의 상품을 담을 수 있으므로 @ManyToOne 어노테이션을 이용해 다대일 관계로 매핑한다.
+2. 장바구니에 담을 상품의 정보를 알아야 하므로 상품 엔티티를 매핑한다. 하나의 상품은 여러 장바구니의 장바구니 상품으로 담길 수 있으므로 마찬가지로 @ManyToOne 어노테이션을 이용해 다대일 관계로 매핑한다.
+3. 같은 상품을 장바구니에 몇 개 담을지 저장한다.
+
+### 다대일 / 일대다 양방향 매핑
+
+- 양방향 매핑이란 단방향 매핑이 2개 있는 것과 같다.
+
+#### 엔티티를 양방향 연관 관계로 설정하면 객체의 참조는 둘인데 외래키는 하나이므로 둘 중 누가 외래키를 관리할지 정해야 한다.
+
+- 연관 관계의 주인은 외래키가 있는 곳으로 설정
+- 연관 관계의 주인이 외래키를 관리(등록, 수정, 삭제)
+- 주인이 아닌 쪽은 연관 관계 매핑 시 mappedBy 속성의 값으로 연관 관계의 주인을 설정
+- 주인이 아닌 쪽은 읽기만 가능
+
+#### 회원 - 주문 ERD
+
+<img src="https://user-images.githubusercontent.com/35963403/157392217-38566018-85a7-4adb-8cec-f38c4939ae5d.PNG" width="400">
+
+#### Order 엔티티
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@Entity
+@Table(name = "orders")
+@Getter @Setter
+public class Order extends BaseEntity {
+
+    @Id @GeneratedValue
+    @Column(name = "order_id")
+    private Long id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "member_id")
+    private Member member;  // 1
+
+    private LocalDateTime orderDate;
+
+    @Enumerated(EnumType.STRING)
+    private OrderStatus orderStatus;
+
+    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true) // 2
+    private List<OrderItem> orderItems = new ArrayList<>(); // 3
+
+}
+```
+
+1. 한 명의 회원은 여러 번 주문할 수 있으므로 주문 엔티티 기준에서 다대일 양방향 매핑
+2. 주문 상품 엔티티와 일대다 매핑. 외래키(order_id)가 order_item 테이블에 있으므로 연관 관계의 주인은 OrderItem 엔티티이다. Order 엔티티가 주인이 아니므로 "mappedBy" 속성으로 연관 관계의 주인을 설정한다. 속성의 값으로 "order"를 적어준 이유는 orderItem에 있는 Order에 의해 관리된다는 의미이다. 즉 연관 관계의 주인의 필드인 order를 mappedBy의 값으로 세팅하면 된다.
+3. 하나의 주문이 여러 개의 주문 상품을 가지므로 List 자료형을 사용해 매핑한다.
+
+- 무조건 양방향으로 연관 관계를 매핑하면 해당 엔티티는 많은 테이블과 연관 관계를 맺게 되고 엔티티 클래스 자체가 복잡해지기 때문에 단방향 매핑으로 설계 후 나중에 필요할 경우 양방향 매핑을 하는게 좋다.
+
+#### OrderItem 엔티티
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@Entity
+@Getter @Setter
+public class OrderItem extends BaseEntity {
+
+    @Id @GeneratedValue
+    @Column(name = "order_item_id")
+    private Long id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "item_id")
+    private Item item;  // 1
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "order_id")
+    private Order order;    // 2
+
+    private int orderPrice;
+
+    private int count;
+    
+}
+```
+
+1. 하나의 상품은 여러 주문 상품으로 들어갈 수 있으므로 주문 상품 기준으로 다대일 단방향 매핑
+2. 한 번의 주문에 여러 개의 상품을 주문할 수 있으므로 주문 상품 엔티티와 주문 엔티티를 다대일 단방향 매핑
+
+#### 주문 - 주문 상품 ERD
+
+<img src="https://user-images.githubusercontent.com/35963403/157393675-eda8f9ff-c4e0-46b6-85c4-1e15253412a4.PNG" width="400">
+
+-
