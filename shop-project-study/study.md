@@ -1245,4 +1245,286 @@ public class OrderItem extends BaseEntity {
 
 <img src="https://user-images.githubusercontent.com/35963403/157393675-eda8f9ff-c4e0-46b6-85c4-1e15253412a4.PNG" width="400">
 
--
+---
+
+## 영속성 전이
+
+#### 영속성 전이: 엔티티의 상태를 변경할 때 해당 엔티티와 연관된 엔티티의 상태 변화를 전파시키는 옵션
+
+|CASCADE 종류|설명|
+|---|---|
+|PERSIST|부모 엔티티가 영속화될 때 자식 엔티티도 영속화|
+|MERGE|부모 엔티티가 병합될 때 자식 엔티티도 병합|
+|REMOVE|부모 엔티티가 삭제될 때 연관된 자실 엔티티도 삭제|
+|REFRESH|부모 엔티티가 refresh되면 연관된 자식 엔티티도 refresh|
+|DETACH|부모 엔티티가 detach 되면 연관된 자식 엔티티도 detach 상태로 변경|
+|ALL|부모 엔티티의 영속성 상태 변화를 자식 엔티티에 모두 전이|
+
+- 영속성 전이 옵션을 무분별하게 사용하면 삭제되지 말아야 할 데이터가 삭제될 수 있으므로 조심해서 사용한다.
+- 따라서 단일 엔티티에 완전히 종속적이고 부모 엔티티와 자식 엔티티의 라이프 사이클이 유사할 때 cascade 옵션을 활용한다.
+
+#### Order 엔티티
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@Entity
+@Table(name = "orders")
+@Getter @Setter
+public class Order extends BaseEntity {
+    
+    ...
+    
+    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL)
+    private List<OrderItem> orderItems = new ArrayList<>();
+
+}
+```
+
+### 고아 객체 제거
+
+- 고아 객체: 부모 엔티티와 연관 관계가 끊어진 자식 엔티티
+- 영속성 전이 기능과 같이 사용하면 부모 엔티티를 통해 자식의 생명 주기를 관리할 수 있다.
+
+#### Order 엔티티
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@Entity
+@Table(name = "orders")
+@Getter @Setter
+public class Order extends BaseEntity {
+    
+    ...
+    
+    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<OrderItem> orderItems = new ArrayList<>();
+
+}
+```
+
+- 주의점: OrderItem 엔티티를 Order 엔티티가 아닌 다른 곳에서 사용하고 있으면 이 기능을 사용하면 안된다.
+- orderItems 리스트에서 삭제를 해서 연관 관계가 끊기게 되면 orderItem 객체를 직접 삭제하지 않았어도 고아객체가 된 orderItem 객체를 삭제한다.
+
+---
+
+## 지연 로딩
+
+#### orderTest
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@SpringBootTest
+@TestPropertySource(locations = "classpath:application-test.properties")
+@Transactional
+class OrderTest {
+    
+    ...
+    
+    @Test
+    @DisplayName("지연 로딩 테스트")
+    public void lazyLoadingTest() {
+        Order order = this.createOrder();
+        Long orderItemId = order.getOrderItems().get(0).getId();
+        em.flush();
+        em.clear();
+
+        OrderItem orderItem = orderItemRepository.findById(orderItemId)
+                .orElseThrow(EntityNotFoundException::new);
+        System.out.println("Order class : " + orderItem.getOrder().getClass());
+    }
+
+}
+```
+
+- orderItem을 조회하면 엄청나게 긴 쿼리가 나온다.
+- 즉시로딩을 사용하면 현재 사용하지 않는 데이터도 한꺼번에 조회해서 성능에 문제가 있을 수 있다.
+
+#### OrderItem 엔티티
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@Entity
+@Getter @Setter
+public class OrderItem extends BaseEntity {
+
+    @Id @GeneratedValue
+    @Column(name = "order_item_id")
+    private Long id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "item_id")
+    private Item item;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "order_id")
+    private Order order;
+
+    private int orderPrice;
+
+    private int count;
+
+}
+```
+
+#### 지연 로딩으로 변경 후 OrderTest
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@SpringBootTest
+@TestPropertySource(locations = "classpath:application-test.properties")
+@Transactional
+class OrderTest {
+    
+    ...
+
+    @Test
+    @DisplayName("지연 로딩 테스트")
+    public void lazyLoadingTest() {
+        Order order = this.createOrder();
+        Long orderItemId = order.getOrderItems().get(0).getId();
+        em.flush();
+        em.clear();
+
+        OrderItem orderItem = orderItemRepository.findById(orderItemId)
+                .orElseThrow(EntityNotFoundException::new);
+        System.out.println("Order class : " + orderItem.getOrder().getClass()); // 1
+        System.out.println("========================");
+        orderItem.getOrder().getOrderDate();    // 2
+        System.out.println("========================");
+    }
+
+}
+```
+
+- 테스트 코드 실행 결과 orderItem 엔티티만 조회하는 쿼리문이 실행된다.
+- 1 코드의 실행 결과 Order 클래스 조회 결과가 HibernateProxy가 출력된다.
+  - 지연 로딩으로 설정하면 실제 엔티티 대신에 프록시 객체를 넣어둔다.
+  - 프록시 객체는 실제로 사용되기 전까지 데이터 로딩을 하지 않고, 실제 사용 시점에 조회 쿼리문이 실행된다.
+- 2 코드에서 Order의 주문일(orderDate)을 조회할 때 select 쿼리문이 실행된다.
+
+#### 지연 로딩 방식을 사용하기 위해 일대일 다대일 매핑을 전부 FetchType.LAZY 방식으로 설정한다.
+
+---
+
+## Auditing을 이용한 엔티티 공통 속성 공통화
+
+#### Spring Data Jpa에서는 Auditing 기능을 제공해 엔티티가 저장 또는 수정될 때 자동으로 등록일, 수정일, 등록자, 수정자를 입력해준다.
+
+#### AuditorAwareImpl
+
+- 현재 로그인한 사용자의 정보를 등록자와 수정자로 지정하기 위해 AuditorAware 인터페이스를 구현한 클래스를 생성한다.
+
+```java
+package com.gxdxx.shop.config;
+
+...
+
+public class AuditorAwareImpl implements AuditorAware<String> {
+
+    @Override
+    public Optional<String> getCurrentAuditor() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        String userId = "";
+        if (authentication != null) {
+            userId = authentication.getName();  // 1
+        }
+        return Optional.of(userId);
+    }
+
+}
+```
+
+1. 현재 로근인 한 사용자의 정보를 조회해 사용자의 이름을 등록자와 수정자로 지정
+
+#### AuditConfig
+
+- Auditing 기능을 사용하기 위해 Config 파일을 생성한다.
+
+```java
+package com.gxdxx.shop.config;
+
+...
+
+@Configuration
+@EnableJpaAuditing  // 1
+public class AuditConfig {
+
+    @Bean
+    public AuditorAware<String> auditorProvider() { // 2
+        return new AuditorAwareImpl();
+    }
+
+}
+```
+
+1. JPA의 Auditing 기능을 활성화한다.
+2. 등록자와 수정자를 처리해주는 AuditorAware을 빈으로 등록한다.
+
+#### BaseTimeEntity
+
+- 등록자, 수정자를 넣지 않는 테이블도 있을 수 있기 때문에 BaseTimeEntity만 상속받을 수 있도록 생성한다.
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@EntityListeners(value = {AuditingEntityListener.class})    // 1
+@MappedSuperclass   // 2
+@Getter @Setter
+public abstract class BaseTimeEntity {
+
+    @CreatedDate    // 3
+    @Column(updatable = false)
+    private LocalDateTime registerTime;
+
+    @LastModifiedDate   // 4
+    private LocalDateTime updateTime;
+
+}
+```
+
+1. Auditing을 적용하기 위해 @EntityListeners 어노테이션을 추가
+2. 공통 매핑 정보가 필요할 때 사용하는 어노테이션, 부모 클래스를 상속 받는 자식 클래스에 매핑 정보만 제공
+3. 엔티티가 생성돼 저장될 때 시간을 자동으로 저장
+4. 엔티티의 값을 변경할 때 시간을 자동으로 저장
+
+#### BaseEntity
+
+- BaseEntity는 BaseTimeEntity를 상속받는다.
+- 등록일, 수정일, 등록자, 수정자를 모두 갖는 엔티티는 BaseEntity를 상속 받으면 된다.
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@EntityListeners(value = {AuditingEntityListener.class})
+@MappedSuperclass
+@Getter
+public abstract class BaseEntity extends BaseTimeEntity {
+
+    @CreatedBy
+    @Column(updatable = false)
+    private String createdBy;
+
+    @LastModifiedBy
+    private String modifiedBy;
+
+}
+```
