@@ -1528,3 +1528,419 @@ public abstract class BaseEntity extends BaseTimeEntity {
 
 }
 ```
+
+---
+
+## 상품 등록
+
+#### ItemImg 엔티티
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@Entity
+@Table(name = "item_img")
+@Getter @Setter
+public class ItemImg extends BaseEntity {
+
+    @Id
+    @Column(name = "item_img_id")
+    @GeneratedValue(strategy = GenerationType.AUTO)
+    private Long id;
+
+    private String imgName;   // 이미지 파일명
+
+    private String oriImgName;   // 원본 이미지 파일명
+
+    private String imgUrl;    // 이미지 조회 경로
+
+    private String repImgYn;  // 대표 이미지 여부
+
+    @ManyToOne(fetch = FetchType.LAZY)  // 1
+    @JoinColumn(name = "item_id")
+    private Item item;
+
+    public void updateItemImg(String oriImgName, String imgName, String imgUrl) {   // 2
+        this.oriImgName = oriImgName;
+        this.imgName = imgName;
+        this.imgUrl = imgUrl;
+    }
+
+}
+```
+
+1. 상품 엔티티와 다대일 단방향 관계로 매핑한다. 지연로딩을 설정해 매핑된 상품 엔티티 정보가 필요할 경우 데이터를 조회하도록 한다.
+2. 원본 이미지 파일명, 업데이트할 이미지 파일명, 이미지 경로를 파라미터로 입력 받아서 이미지 정보를 업데이트
+
+#### ItemImgDto
+
+```java
+package com.gxdxx.shop.dto;
+
+...
+
+@Getter @Setter
+public class ItemImgDto {
+
+    private Long id;
+
+    private String imgName;
+
+    private String oriImgName;
+
+    private String imgUrl;
+
+    private String repImgYn;
+
+    private static ModelMapper modelMapper = new ModelMapper(); // 1
+
+    public static ItemImgDto of(ItemImg itemImg) {
+        return modelMapper.map(itemImg, ItemImgDto.class);  // 2
+    }
+
+}
+```
+
+1. 멤버 변수로 ModelMapper 객체를 추가
+2. ItemImg 엔티티 객체를 파라미터로 받아서 ItemImg 객체의 자료형과 멤버변수의 이름이 같을 때 ItemImgDto로 값을 복사해서 반환한다. static 메소드로 선언해 ItemImgDto 객체를 생성하지 않아도 호출할 수 있도록 한다.
+
+#### modelmapper: 서로 다른 클래스의 값을 필드의 이름과 자료형이 같으면 getter, setter를 통해 값을 복사해서 객체를 반환해준다.
+
+- 상품을 등록할 때는 화면으로부터 전달받은 DTO 객체를 엔티티 객체로 변환하는 작업을 해야하고,
+- 상품을 조회할 때는 엔티티 객체를 DTO 객체로 바꿔주는 작업을 해야 한다.
+- 이 작업은 반복적인 작업이기 때문에 modelmapper 라이브러리를 사용한다.
+
+#### ItemFormDto
+
+```java
+package com.gxdxx.shop.dto;
+
+...
+
+@Getter @Setter
+public class ItemFormDto {
+
+    private Long id;
+
+    @NotBlank(message = "상품명은 필수 입력 값입니다.")
+    private String itemName;
+
+    @NotNull(message = "가격은 필수 입력 값입니다.")
+    private Integer price;
+
+    @NotBlank(message = "상품 상세설명은 필수 입력 값입니다.")
+    private String itemDescription;
+
+    @NotNull(message = "재고 수량은 필수 입력 값입니다.")
+    private Integer stockQuantity;
+
+    private ItemSellStatus itemSellStatus;
+
+    private List<ItemImgDto> itemImgDtoList = new ArrayList<>();    // 1
+
+    private List<Long> itemImgIds = new ArrayList<>();  // 2
+
+    private static ModelMapper modelMapper = new ModelMapper();
+
+    public Item createItem() {
+        return modelMapper.map(this, Item.class);   // 3
+    }
+
+    public static ItemFormDto of(Item item) {
+        return modelMapper.map(item, ItemFormDto.class);    // 3
+    }
+
+}
+```
+
+1. 상품 저장 후 수정할 때 상품 이미지 정보를 저장하는 리스트
+2. 상품의 이미지 아이디를 저장하는 리스트. 상품 등록 시에는 아직 상품의 이미지를 등록하지 않았기 때문에 아무 값도 들어가 있지 않고 수정 시에 이미지 아이디를 담아둘 용도로 사용
+3. modelMapper를 이용해 엔티티 객체와 DTO 객체 간의 데이터를 복사해 복사한 객체를 반환해주는 메소드
+
+#### WebMvcConfig
+
+- 업로드한 파일을 읽어올 경로를 설정하기 위해 WebMvcConfigurer 인터페이스를 구현하는 WebMvcConfig 생성
+- addResourceHandlers 메소드를 통해 자신의 로컬 컴퓨터에 업로드한 파일을 찾을 위치를 설정
+
+```java
+package com.gxdxx.shop.config;
+
+...
+
+@Configuration
+public class WebMvcConfig implements WebMvcConfigurer {
+
+    @Value("${uploadPath}") // 1
+    String uploadPath;
+
+    @Override
+    public void addResourceHandlers(ResourceHandlerRegistry registry) {
+        registry.addResourceHandler("/images/**")   // 2
+                .addResourceLocations(uploadPath);  // 3
+    }
+
+}
+```
+
+1. application.properties에 설정한 "uploadPath" 프로퍼티 값을 읽어온다.
+2. 웹 브라우저에 입력하는 url에 /images로 시작하는 경우 uploadPath에 설정한 폴더를 기준으로 파일을 읽어오도록 설정
+3. 로컬 컴퓨터에 저장된 파일을 읽어올 root 경로를 설정
+
+#### FileService
+
+```java
+package com.gxdxx.shop.service;
+
+...
+
+@Service
+@Log
+public class FileService {
+
+    public String uploadFile(String uploadPath, String originalFileName, byte[] fileData) throws Exception {
+        UUID uuid = UUID.randomUUID();  // 1
+        String extension = originalFileName.substring(originalFileName.lastIndexOf("."));
+        String savedFileName = uuid.toString() + extension; // 2
+        String fileUploadFullUrl = uploadPath + "/" + savedFileName;
+        FileOutputStream fos = new FileOutputStream(fileUploadFullUrl); // 3
+        fos.write(fileData);    // 4
+        fos.close();
+        return savedFileName;   // 5
+    }
+
+    public void deleteFile(String filePath) throws Exception {
+        File deleteFile = new File(filePath);   // 6
+      
+        if (deleteFile.exists()) {  // 7
+            deleteFile.delete();
+            log.info("파일을 삭제하였습니다.");
+        } else {
+            log.info("파일이 존재하지 않습니다.");
+        }
+    }
+
+}
+```
+
+1. UUID(Universally Unique Identifier)는 서로 다른 개체들을 구별하기 위해 이름을 부여할 때 사용. 실제 사용 시 중복될 가능성이 거의 없기 때문에 파일의 이름으로 사용하면 파일명 중복 문제 해결 가능
+2. UUID로 받은 값과 원래 파일의 이름의 확장자를 조합해서 저장될 파일 이름 생성
+3. FileOutputStream 클래스는 바이트 단위의 출력을 내보내는 클래스. 생성자로 파일이 저장될 위치와 파일의 이름을 넘겨 파일에 쓸 파일 출력 스트림 생성
+4. fileData를 파일 출력 스트림에 입력
+5. 업로드된 파일의 이름을 반환
+6. 파일이 저장된 경로를 이용해 파일 객체를 생성
+7. 해당 파일이 존재하면 파일을 삭제
+
+#### ItemImgService
+
+- 상품 이미지를 업로드하고, 상품 이미지 정보를 저장하는 역할
+
+```java
+package com.gxdxx.shop.service;
+
+...
+
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class ItemImgService {
+
+    @Value("${itemImgLocation}")    // 1
+    private String itemImgLocation;
+
+    private final ItemImgRepository itemImgRepository;
+
+    private final FileService fileService;
+
+    public void saveItemImg(ItemImg itemImg, MultipartFile itemImgFile) throws Exception {
+        String oriImgName = itemImgFile.getOriginalFilename();
+        String imgName = "";
+        String imgUrl = "";
+
+        //파일 업로드
+        if (!StringUtils.isEmpty(oriImgName)) {
+            imgName = fileService.uploadFile(itemImgLocation, oriImgName, itemImgFile.getBytes());  // 2
+            imgUrl = "/images/item/" + imgName; // 3
+        }
+
+        //상품 이미지 정보 저장
+        itemImg.updateItemImg(oriImgName, imgName, imgUrl); // 4
+        itemImgRepository.save(itemImg);    // 4
+    }
+
+}
+```
+
+1. @Value 어노테이션을 통해 application.properties 파일에 등록한 itemImgLocation 값을 불러와서 itemImgLocation 변수에 넣음
+2. 사용자가 상품의 이미지를 등록했으면 저장할 경로와 파일의 이름, 파일의 바이트 배열을 파라미터로 넣어 uploadFile 메소드를 호출하고 결과로 나온 로컬에 저장된 파일의 이름을 imgName 변수에 저장
+3. 저장한 상품 이미지를 불러올 경로를 설정. 외부 리소스를 불러오는 urlPatterns로 WebMvcConfig 클래스에서 "/images/**"를 설정해주었고 application.properties에서 설정한 uploadPath 프로퍼티 경로인 "C:/shop/" 아래 item 폴더에 이미지를 저장하므로 상품 이미지를 불러오는 경로로 "/images/item/"를 붙여준다.
+4. 입력받은 상품 이미지 정보를 저장
+      - imgName: 실제 로컬에 저장된 상품 이미지 파일의 이름
+      - oriImgName: 업로드했던 상품 이미지 파일의 원래 이름
+      - imgUrl: 업로드 결과 로컬에 저장된 상품 이미지 파일을 불러오는 경로
+
+#### ItemService
+
+```java
+package com.gxdxx.shop.service;
+
+...
+
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class ItemService {
+
+    private final ItemRepository itemRepository;
+    private final ItemImgService itemImgService;
+    private final ItemImgRepository itemImgRepository;
+
+    public Long saveItem(ItemFormDto itemFormDto, List<MultipartFile> itemImgFileList) throws Exception {
+
+        //상품 등록
+        Item item = itemFormDto.createItem();   // 1
+        itemRepository.save(item);  // 2
+
+        //이미지 등록
+        for (int i = 0; i < itemImgFileList.size(); i++) {
+            ItemImg itemImg = new ItemImg();
+            itemImg.setItem(item);
+            if (i == 0) {   // 3
+                itemImg.setRepImgYn("Y");
+            } else {
+                itemImg.setRepImgYn("N");
+            }
+            itemImgService.saveItemImg(itemImg, itemImgFileList.get(i));    // 4 
+        }
+
+        return item.getId();
+    }
+
+}
+```
+
+1. 상품 등록 폼으로부터 입력 받은 데이터를 이용해 item 객체를 생성
+2. 상품 데이터를 저장
+3. 첫 번째 이미지일 경우 대표 상품 이미지 여부 값을 "Y"로 세팅. 나머지 상품 이미지는 "N"으로 설정
+4. 상품의 이미지 정보를 저장
+
+#### ItemController
+
+```java
+package com.gxdxx.shop.controller;
+
+...
+
+@Controller
+@RequiredArgsConstructor
+public class ItemController {
+
+    private final ItemService itemService;
+
+    @GetMapping(value = "/admin/item/new")
+    public String itemForm(Model model) {
+        model.addAttribute("itemFormDto", new ItemFormDto());
+        return "item/itemForm";
+    }
+
+    @PostMapping(value = "/admin/item/new")
+    public String itemNew(@Valid ItemFormDto itemFormDto, BindingResult bindingResult,
+                          Model model, @RequestParam("itemImgFile") List<MultipartFile> itemImgFileList) {
+
+        if (bindingResult.hasErrors()) {    // 1
+            return "item/itemForm";
+        }
+
+        if (itemImgFileList.get(0).isEmpty() && itemFormDto.getId() == null) {  // 2
+            model.addAttribute("errorMessage", "첫번째 상품 이미지는 필수 입력 값입니다.");
+            return "item/itemForm";
+        }
+
+        try {
+            itemService.saveItem(itemFormDto, itemImgFileList); // 3
+        } catch (Exception e) {
+            model.addAttribute("errorMessage", "상품 등록 중 에러가 발생했습니다.");
+            return "item/itemForm";
+        }
+
+        return "redirect:/";    // 4
+    }
+
+}
+```
+
+1. 상품 등록 시 필수 값이 없으면 다시 상품 등록 페이지로 전환
+2. 상품 등록 시 첫 번째 이미지가 없으면 에러 메시지와 함께 상품 등록 페이지로 전환. 상품의 첫 번쨰 이미지는 메인 페이지에서 보여줄 상품 이미지로 사용하기 위해 필수 값으로 지정
+3. 상품 저장 로직 호출. 매개 변수로 상품 정보와 상품 이미지 정보를 담고 있는 itemImgFileList를 넘겨줌
+4. 상품이 정상적으로 등록되었다면 메인 페이지로 이동
+
+#### ItemService 테스트
+
+```java
+package com.gxdxx.shop.service;
+
+...
+
+@SpringBootTest
+@Transactional
+@TestPropertySource(locations = "classpath:application-test.properties")
+class ItemServiceTest {
+
+    @Autowired
+    ItemService itemService;
+
+    @Autowired
+    ItemRepository itemRepository;
+
+    @Autowired
+    ItemImgRepository itemImgRepository;
+
+    List<MultipartFile> createMultipartFiles() throws Exception {   // 1
+
+        List<MultipartFile> multipartFileList = new ArrayList<>();
+
+        for (int i = 0; i < 5; i++) {
+            String path = "C:/shop/item/";
+            String imageName = "image" + i + ".jpg";
+            MockMultipartFile multipartFile = new MockMultipartFile(path, imageName, "image/jpg", new byte[]{1, 2, 3, 4});
+            multipartFileList.add(multipartFile);
+        }
+
+        return multipartFileList;
+    }
+
+    @Test
+    @DisplayName("상품 등록 테스트")
+    @WithMockUser(username = "admin", roles = "ADMIN")
+    void saveItem() throws Exception {
+        ItemFormDto itemFormDto = new ItemFormDto();    // 2
+        itemFormDto.setItemName("테스트상품");
+        itemFormDto.setItemSellStatus(ItemSellStatus.SELL);
+        itemFormDto.setItemDescription("테스트 상품입니다.");
+        itemFormDto.setPrice(1000);
+        itemFormDto.setStockQuantity(100);
+
+        List<MultipartFile> multipartFileList = createMultipartFiles();
+        Long itemId = itemService.saveItem(itemFormDto, multipartFileList); // 3
+
+        List<ItemImg> itemImgList = itemImgRepository.findByItemIdOrderByIdAsc(itemId);
+
+        Item item = itemRepository.findById(itemId).orElseThrow(EntityNotFoundException::new);
+
+        assertEquals(itemFormDto.getItemName(), item.getItemName());    // 4
+        assertEquals(itemFormDto.getItemSellStatus(), item.getItemSellStatus());
+        assertEquals(itemFormDto.getItemDescription(), item.getItemDescription());
+        assertEquals(itemFormDto.getPrice(), item.getPrice());
+        assertEquals(itemFormDto.getStockQuantity(), item.getStockQuantity());
+        assertEquals(multipartFileList.get(0).getOriginalFilename(), itemImgList.get(0).getOriImgName());   // 5
+    }
+
+}
+```
+
+1. MockMultipartFile 클래스를 이용해 가짜 MultipartFile 리스트를 만들어 반환해주는 메소드
+2. 상품 등록 화면에서 입력받는 상품 데이터를 세팅해줌
+3. 상품 데이터와 이미지 정보를 파라미터로 넘겨서 저장 후 저장된 상품의 아이디 값을 반환값으로 리턴
+4. 입력한 상품 데이터와 실제로 저장된 상품 데이터가 같은지 확인
+5. 첫 번째 파일의 원본 이미지 파일 이름과 같은지 확인
