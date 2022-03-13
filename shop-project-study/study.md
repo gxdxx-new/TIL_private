@@ -1944,3 +1944,236 @@ class ItemServiceTest {
 3. 상품 데이터와 이미지 정보를 파라미터로 넘겨서 저장 후 저장된 상품의 아이디 값을 반환값으로 리턴
 4. 입력한 상품 데이터와 실제로 저장된 상품 데이터가 같은지 확인
 5. 첫 번째 파일의 원본 이미지 파일 이름과 같은지 확인
+
+---
+
+## 상품 수정
+
+#### ItemService
+
+#### 등록된 상품을 불러오는 메소드를 추가
+
+```java
+package com.gxdxx.shop.service;
+
+...
+
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class ItemService {
+    
+    ...
+
+    @Transactional(readOnly = true) // 1
+    public ItemFormDto getItemDtl(Long itemId) {
+
+        List<ItemImg> itemImgList = itemImgRepository.findByItemIdOrderByIdAsc(itemId); // 2
+        List<ItemImgDto> itemImgDtoList = new ArrayList<>();
+        for (ItemImg itemImg : itemImgList) {   // 3
+            ItemImgDto itemImgDto = ItemImgDto.of(itemImg);
+            itemImgDtoList.add(itemImgDto);
+        }
+
+        Item item = itemRepository.findById(itemId).orElseThrow(EntityNotFoundException::new);  // 4
+        ItemFormDto itemFormDto = ItemFormDto.of(item);
+        itemFormDto.setItemImgDtoList(itemImgDtoList);
+
+        return itemFormDto;
+    }
+
+}
+```
+
+1. 상품 데이터를 읽어오는 트랜잭션을 읽기 전용으로 설정해서 JPA가 더티체킹(변경감지)을 수행하지 않아서 성능을 향상시킴
+2. 해당 상품의 이미지를 조회. 등록순으로 가져오기 위해 상품 이미지 아이디 오름차순으로 가지고 옴
+3. 조회한 ItemImg 엔티리를 ItemImgDto 객체로 만들어서 리스트에 추가
+4. 상품 id로 상품 엔티티를 조회
+
+#### ItemController
+
+#### 상품 수정 페이지로 진입하는 코드 추가
+
+```java
+package com.gxdxx.shop.controller;
+
+...
+
+@Controller
+@RequiredArgsConstructor
+public class ItemController {
+
+    ...
+
+    @GetMapping(value = "/admin/item/{itemId}")
+    public String itemDtl(@PathVariable("itemId") Long itemId, Model model) {
+
+        try {
+            ItemFormDto itemFormDto = itemService.getItemDtl(itemId);
+            model.addAttribute("itemFormDto", itemFormDto); // 1
+        } catch (EntityNotFoundException e) {   // 2
+            model.addAttribute("errorMessage", "존재하지 않는 상품입니다.");
+            model.addAttribute("itemFormDto", new ItemFormDto());
+            return "item/itemForm";
+        }
+
+        return"item/itemForm";
+    }
+
+}
+```
+
+1. 조회한 상품 데이터를 모델에 담아서 뷰로 전달
+2. 상품 엔티티가 존재하지 않을 경우 에러 메시지를 담아서 상품 등록 페이지로 이동
+
+#### ItemImgService
+
+#### 상품 이미지 수정 메소드 추가
+
+```java
+package com.gxdxx.shop.service;
+
+...
+
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class ItemImgService {
+
+    ...
+
+    public void updateItemImg(Long itemImgId, MultipartFile itemImgFile) throws Exception {
+        if (!itemImgFile.isEmpty()) {   // 1
+            ItemImg savedItemImg = itemImgRepository.findById(itemImgId).orElseThrow(EntityNotFoundException::new); // 2
+
+            //기존 이미지 파일 삭제
+            if (!StringUtils.isEmpty(savedItemImg.getImgName())) {  // 3
+                fileService.deleteFile(itemImgLocation + "/" + savedItemImg.getImgName());
+            }
+
+            String oriImgName = itemImgFile.getOriginalFilename();
+            String imgName = fileService.uploadFile(itemImgLocation, oriImgName, itemImgFile.getBytes());   // 4
+            String imgUrl = "/images/item/" + imgName;
+            savedItemImg.updateItemImg(oriImgName, imgName, imgUrl);    // 5
+        }
+    }
+
+}
+```
+
+1. 상품 이미지가 존재하는지 확인
+2. 상품 이미지 id를 이용해 기존에 저장했던 상품 이미지 엔티티를 조회
+3. 기존에 등록된 상품 이미지 파일이 있을 경우 해당 파일을 삭제
+4. 업데이트한 상품 이미지 파일을 업로드
+5. 변경된 상품 이미지 정보를 세팅. savedItemImg 엔티티는 현재 영속 상태이므로 데이터를 변경하는 것만으로 변경 감지 기능이 동작해 트랜잭션이 끝날 때 update 쿼리가 실행됨
+
+#### Item
+
+#### 상품 업데이트 로직 추가
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@Entity
+@Table(name = "item")
+@Getter @Setter
+@ToString
+public class Item extends BaseEntity {
+
+    ...
+
+    public void updateItem(ItemFormDto itemFormDto) {
+        this.itemName = itemFormDto.getItemName();
+        this.price = itemFormDto.getPrice();
+        this.stockQuantity = itemFormDto.getStockQuantity();
+        this.itemDescription = itemFormDto.getItemDescription();
+        this.itemSellStatus = itemFormDto.getItemSellStatus();
+    }
+
+}
+```
+
+#### ItemService
+
+#### 상품 업데이트 메소드 추가
+
+```java
+package com.gxdxx.shop.service;
+
+...
+
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class ItemService {
+
+    ...
+
+    public Long updateItem(ItemFormDto itemFormDto, List<MultipartFile> itemImgFileList) throws Exception {
+
+        //상품 수정
+        Item item = itemRepository.findById(itemFormDto.getId()).orElseThrow(EntityNotFoundException::new); // 1
+        item.updateItem(itemFormDto);   // 2
+
+        List<Long> itemImgIds = itemFormDto.getItemImgIds();    // 3
+
+        //이미지 등록
+        for (int i = 0; i < itemImgFileList.size(); i++) {
+            itemImgService.updateItemImg(itemImgIds.get(i), itemImgFileList.get(i));    // 4
+        }
+
+        return item.getId();
+    }
+
+}
+```
+
+1. 상품 등록 화면으로부터 전달받은 상품 id를 이용해 상품 엔티티 조회
+2. 상품 등록 화면으로부터 전달받은 ItemFormDto를 통해 상품 엔티티를 업데이트
+3. 상품 이미지 id 리스트를 조회
+4. 상품 이미지를 업데이트 하기 위해 updateItemImg() 메소드에 상품 이미지 id, 상품 이미지 파일 정보를 파라미터로 전달
+
+#### ItemController
+
+#### 상품 수정하는 URL 추가
+
+```java
+package com.gxdxx.shop.controller;
+
+...
+
+@Controller
+@RequiredArgsConstructor
+public class ItemController {
+
+    ...
+    
+    @PostMapping(value = "/admin/item/{itemId}")
+    public String itemUpdate(@Valid ItemFormDto itemFormDto, BindingResult bindingResult,
+                             @RequestParam("itemImgFile") List<MultipartFile> itemImgFileList, Model model) {
+
+        if (bindingResult.hasErrors()) {
+            return "item/itemForm";
+        }
+
+        if (itemImgFileList.get(0).isEmpty() && itemFormDto.getId() == null) {
+            model.addAttribute("errorMessage", "첫번째 상품 이미지는 필수 입력값입니다.");
+            return "item/itemForm";
+        }
+
+        try {
+            itemService.updateItem(itemFormDto, itemImgFileList);   // 1
+        } catch (Exception e) {
+            model.addAttribute("errorMessage", "상품 수정 중 에러가 발생했습니다.");
+            return "item/itemForm";
+        }
+
+        return "redirect:/";
+    }
+
+}
+```
+
+1. 상품 수정 로직 호출
