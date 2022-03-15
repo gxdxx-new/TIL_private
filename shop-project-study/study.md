@@ -2610,3 +2610,339 @@ public class ItemController {
 }
 ```
 
+## 주문 기능
+
+#### OutOfStockException
+
+```java
+package com.gxdxx.shop.exception;
+
+public class OutOfStockException extends RuntimeException {
+
+    public OutOfStockException(String message) {
+        super(message);
+    }
+
+}
+```
+
+- 상품의 주문 수량보다 재고의 수가 적을 때 발생시킬 exception
+- RuntimeException을 상속받음
+
+#### Item
+
+#### 엔티티 클래스에 비즈니스 로직을 메소드로 작성해 코드의 재사용과 데이터의 변경 포인트를 한군데로 모음
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@Entity
+@Table(name = "item")
+@Getter @Setter
+@ToString
+public class Item extends BaseEntity {
+
+    ...
+    
+    public void removeStock(int stockQuantity) {
+        int restStock = this.stockQuantity - stockQuantity; // 1
+        if (restStock < 0) {
+            throw new OutOfStockException("상품의 재고가 부족합니다. (현재 재고 수량: " + this.stockQuantity + ")"); // 2
+        }
+        this.stockQuantity = restStock; // 3
+    }
+
+}
+```
+
+1. 상품의 재고 수량에서 주문 후 남은 재고 수량을 구함
+2. 상품의 재고가 주문 수량보다 작을 경우 재고 부족 예외 발생
+3. 주문 후 남은 재고 수량을 상품의 현재 재고 값으로 할당
+
+#### OrderItem
+
+#### 주문할 상품과 주문 수량을 통해 OrderItem 객체를 만드는 메소드 작성
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@Entity
+@Getter @Setter
+public class OrderItem extends BaseEntity {
+
+    ...
+
+    public static OrderItem createOrderItem(Item item, int count) {
+        OrderItem orderItem = new OrderItem();
+        orderItem.setItem(item);    // 1
+        orderItem.setCount(count);  // 1
+        orderItem.setOrderPrice(item.getPrice());   // 3
+
+        item.removeStock(count);    // 4
+        return orderItem;
+    }
+
+    public int getTotalPrice() {    // 5
+        return orderPrice * count;
+    }
+
+}
+```
+
+1. 주문할 상품과 주문 수량 세팅
+2. 현재 시간 기준으로 상품 가격을 주문 가격으로 세팅. 상품 가격은 시간에 따라 달라질 수 있음.
+3. 주문 수량만큼 상품의 재고 수량 감소
+4. 주문 가격과 주문 수량을 곱해서 해당 상품을 주문한 총 가격을 계산
+
+#### Order
+
+#### 생성한 주문 상품 객체를 이용해 주문 객체를 만드는 메소드 작성
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@Entity
+@Table(name = "orders")
+@Getter @Setter
+public class Order extends BaseEntity {
+
+    ...
+
+    public void addOrderItem(OrderItem orderItem) { // 1
+        orderItems.add(orderItem);
+        orderItem.setOrder(this);   // 2
+    }
+
+    public static Order createOrder(Member member, List<OrderItem> orderItemList) {
+        Order order = new Order();
+        order.setMember(member);    // 3
+        for (OrderItem orderItem : orderItemList) { // 4
+            order.addOrderItem(orderItem);
+        }
+        order.setOrderStatus(OrderStatus.ORDER);    // 5
+        order.setOrderDate(LocalDateTime.now());    // 6
+        return order;
+    }
+
+    public int getTotalPrice() {    // 7
+        int totalPrice = 0;
+        for (OrderItem orderItem : orderItems) {
+            totalPrice += orderItem.getTotalPrice();
+        }
+        return totalPrice;
+    }
+
+    public void cancelOrder() {
+        this.orderStatus = OrderStatus.CANCEL;
+
+        for (OrderItem orderItem : orderItems) {
+            orderItem.cancel();
+        }
+    }
+
+}
+```
+
+1. orderItems에는 주문 상품 정보들을 담아줌. orderItem 객체를 order 객체의 orderItems에 추가
+2. Order 엔티티와 OrderItem 엔티티가 양방향 참조 관계이므로 orderItem 객체에도 order 객체를 세팅
+3. 상품을 주문한 회원 정보를 세팅
+4. 상품 페이지에서는 1개의 상품을 주문하지만, 장바구니 페이지에서는 한 번에 여러 개의 상품을 주문할 수 있음. 따라서 여러 개의 주문 상품을 담을 수 있도록 리스트 형태로 파라미터 값을 받으며 주문 객체에 orderItem 객체를 추가
+5. 주문 상태를 "ORDER"로 세팅
+6. 현재 시간을 주문 시간으로 세팅
+7. 총 주문 금액을 구하는 메소드
+
+#### OrderDto
+
+#### 상품 상세 페이지에서 주문할 상품의 아이디와 주문 수량을 전달 받을 클래스
+
+```java
+package com.gxdxx.shop.dto;
+
+...
+
+@Getter @Setter
+public class OrderDto {
+
+    @NotNull(message = "상품 아이디는 필수 입력값입니다.")
+    private Long itemId;
+
+    @Min(value = 1, message = "최소 주문 수량은 1개입니다.")
+    @Max(value = 999, message = "최대 주문 수량은 999개입니다.")
+    private int count;
+
+}
+```
+
+#### OrderService
+
+#### 주문 로직 구현
+
+```java
+package com.gxdxx.shop.service;
+
+...
+
+@Service
+@Transactional
+@RequiredArgsConstructor
+public class OrderService {
+
+    private final ItemRepository itemRepository;
+    private final MemberRepository memberRepository;
+    private final OrderRepository orderRepository;
+
+    public Long order(OrderDto orderDto, String email) {
+        Item item = itemRepository.findById(orderDto.getItemId()).orElseThrow(EntityNotFoundException::new);    // 1
+        Member member = memberRepository.findByEmail(email);    // 2
+
+        List<OrderItem> orderItemList = new ArrayList<>();
+        OrderItem orderItem = OrderItem.createOrderItem(item, orderDto.getCount()); // 3
+        orderItemList.add(orderItem);
+
+        Order order = Order.createOrder(member, orderItemList); // 4
+        orderRepository.save(order);    // 5
+
+        return order.getId();
+    }
+
+}
+```
+
+1. 주문할 상품 조회
+2. 현재 로그인한 회원의 이메일 정보를 이용해 회원 정보 조회
+3. 주문할 상품 엔티티와 주문 수량을 이용해 주문 상품 엔티티 생성
+4. 회원 정보와 주문할 상품 리스트 정보를 이용해 주문 엔티티 생성
+5. 생성한 주문 엔티티 저장
+
+#### OrderController
+
+#### 주문 관련 요청 처리하는 클래스 생성
+
+#### 상품 주문에서 웹 페이지의 새로 고침 없이 서버에 주문을 요청하기 위해 비동기 방식 사용
+
+```java
+package com.gxdxx.shop.controller;
+
+...
+
+@Controller
+@RequiredArgsConstructor
+public class OrderController {
+
+    private final OrderService orderService;
+
+    @PostMapping(value = "/order")
+    public @ResponseBody ResponseEntity order (@RequestBody @Valid OrderDto orderDto,
+                                               BindingResult bindingResult, Principal principal) {  // 1
+
+        if (bindingResult.hasErrors()) {    // 2
+            StringBuilder sb = new StringBuilder();
+            List<FieldError> fieldErrors = bindingResult.getFieldErrors();
+            for (FieldError fieldError : fieldErrors) {
+                sb.append(fieldError.getDefaultMessage());
+            }
+            return new ResponseEntity<String>(sb.toString(), HttpStatus.BAD_REQUEST);   // 3
+        }
+
+        String email = principal.getName(); // 4
+        Long orderId;
+
+        try {
+            orderId = orderService.order(orderDto, email);  // 5
+        } catch(Exception e) {
+            return new ResponseEntity<String>(e.getMessage(), HttpStatus.BAD_REQUEST);
+        }
+
+        return new ResponseEntity<Long>(orderId, HttpStatus.OK);    // 6
+    }
+    
+}
+```
+
+1. 스프링에서 비동기 처리를 할 때 @RequestBody 와 @ResponseBody 어노테이션을 사용
+    - @RequestBody: HTTP 요청의 본문 body에 담긴 내용을 자바 객체로 전달
+    - @ResponseBody: 자바 객체를 HTTP 요청의 body로 전달
+2. 주문 정보를 받는 orderDto 객체에 데이터 바인딩 시 에러가 있는지 검사
+3. 에러 정보를 ResponseEntity 객체에 담아 반환
+4. 현재 로그인 유저의 정보를 얻기 위해 @Controller 어노테이션이 선언된 클래스에서 메소드 인자로 principal 객체를 넘겨 줄 경우 해당 객체에 직접 접근 가능. principal 객체에서 현재 로그인한 회원의 이메일 정보를 조회
+5. 화면으로부터 넘어오는 주문 정보와 회원의 이메일 정보를 이용해 주문 로직 호출
+6. 결과값으로 생성된 주문 번호와 요청이 성공했다는 HTTP 응답 상태 코드를 반환
+
+#### OrderServiceTest
+
+#### 주문 기능 테스트
+
+```java
+package com.gxdxx.shop.service;
+
+...
+
+@SpringBootTest
+@Transactional
+@TestPropertySource(locations = "classpath:application-test.properties")
+class OrderServiceTest {
+
+    @Autowired
+    private OrderService orderService;
+
+    @Autowired
+    private OrderRepository orderRepository;
+
+    @Autowired
+    ItemRepository itemRepository;
+
+    @Autowired
+    MemberRepository memberRepository;
+
+    public Item saveItem() {    // 1
+        Item item = new Item();
+        item.setItemName("테스트 상품");
+        item.setPrice(10000);
+        item.setItemDescription("테스트 상품 상세 설명");
+        item.setItemSellStatus(ItemSellStatus.SELL);
+        item.setStockQuantity(100);
+        return itemRepository.save(item);
+    }
+
+    public Member saveMember() {    // 1
+        Member member = new Member();
+        member.setEmail("test@test.com");
+        return memberRepository.save(member);
+    }
+
+    @Test
+    @DisplayName("주문 테스트")
+    public void order() {
+        Item item = saveItem();
+        Member member = saveMember();
+
+        OrderDto orderDto = new OrderDto();
+        orderDto.setCount(10);  // 2
+        orderDto.setItemId(item.getId());   // 2
+
+        Long orderId = orderService.order(orderDto, member.getEmail()); // 3
+
+        Order order = orderRepository.findById(orderId).orElseThrow(EntityNotFoundException::new);  // 4
+
+        List<OrderItem> orderItems = order.getOrderItems();
+
+        int totalPrice = orderDto.getCount() * item.getPrice(); // 5
+
+        assertEquals(totalPrice, order.getTotalPrice());    // 6
+    }
+
+}
+```
+
+1. 테스트를 위해 주문할 상품과 회원 정보를 저장하는 메소드 생성
+2. 주문할 상품과 상품 수량을 orderDto 객체에 세팅
+3. 주문 로직 호출 결과 생성된 주문 번호를 orderId 변수에 저장
+4. 주문 번호를 이용해 저장된 주문 정보 조회
+5. 주문한 상품의 총 가격 계산
+6. 주문한 상품의 총 가격과 데이터베이스에 저장된 상품의 가격을 비교해 같으면 테스트가 성공
