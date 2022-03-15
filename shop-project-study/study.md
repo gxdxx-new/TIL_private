@@ -2424,4 +2424,189 @@ public class ItemController {
 5. 페이지 전환 시 기존 검색 조건을 유지한 채 이동할 수 있도록 뷰에 다시 전달
 6. 상품 관리 메뉴 하단에 보여줄 페이지 번호의 최대 개수. 5로 설정하면 최대 5개의 이동할 페이지 번호만 보여줌
 
+## 메인 화면
+
+```java
+package com.gxdxx.shop.dto;
+
+...
+
+@Getter @Setter
+public class MainItemDto {
+
+    private Long id;
+
+    private String itemName;
+
+    private String itemDescription;
+
+    private String imgUrl;
+
+    private Integer price;
+
+    @QueryProjection    // 1
+    public MainItemDto(Long id, String itemName, String itemDescription, String imgUrl, Integer price) {
+        this.id = id;
+        this.itemName = itemName;
+        this.itemDescription = itemDescription;
+        this.imgUrl = imgUrl;
+        this.price = price;
+    }
+
+}
+```
+
+1. 생성자에 @QueryProjection 어노테이션을 선언해 Querydsl로 결과 조회 시 MainItemDto 객체로 바로 받아오도록 활용
+
+#### @QueryProjection
+
+- Item 객체로 값을 받은 후 DTO 클래스로 변환하는 과정 업싱 바로 DTO 객체를 뽑아낼 수 있게 해준다.
+- maven compile을 실행해 QDto 파일을 생성해서 사용할 수 있다.
+
+#### ItemRepositoryCustom
+
+```java
+package com.gxdxx.shop.repository;
+
+...
+
+public interface ItemRepositoryCustom {
+
+    Page<MainItemDto> getMainItemPage(ItemSearchDto itemSearchDto, Pageable pageable);  // 1
+
+}
+```
+
+1. 메인 페이지에 보여줄 상품 리스트를 가져오는 메소드
+
+#### ItemRepositoryCustomImle
+
+```java
+package com.gxdxx.shop.repository;
+
+...
+
+public class ItemRepositoryCustomImpl implements ItemRepositoryCustom {
+
+    ...
+
+    private BooleanExpression itemNameLike(String searchQuery) {    // 1
+        return StringUtils.isEmpty(searchQuery) ? null : QItem.item.itemName.like("%" + searchQuery + "%");
+    }
+
+    @Override
+    public Page<MainItemDto> getMainItemPage(ItemSearchDto itemSearchDto, Pageable pageable) {
+        QItem item = QItem.item;
+        QItemImg itemImg = QItemImg.itemImg;
+
+        List<MainItemDto> content = queryFactory
+                .select(
+                        new QMainItemDto(   // 2
+                                item.id,
+                                item.itemName,
+                                item.itemDescription,
+                                itemImg.imgUrl, 
+                                item.price)
+        )
+                .from(itemImg)
+                .join(itemImg.item, item)   // 3
+                .where(itemImg.repImgYn.eq("Y"))    // 4
+                .where(itemNameLike(itemSearchDto.getSearchQuery()))
+                .orderBy(item.id.desc())
+                .offset(pageable.getOffset())
+                .limit(pageable.getPageSize())
+                .fetch();
+
+        return new PageImpl<>(content, pageable, content.size());
+    }
+
+}
+```
+
+1. 검색어가 null이 아니면 상품명에 해당 검색어가 포함되는 상품을 조회하는 조건을 반환
+2. QMainItemDto의 생성자에 반환할 값들을 넣어줌. @QueryProjection을 사용하면 DTO로 바로 조회가 가능해서 엔티티 조회 후 DTO로 변환하는 과정을 줄일 수 있음
+3. itemImg와 item을 내부 조인
+4. 상품 이미지의 경우 대표 상품 이미지만 불러옴
+
+#### ItemService
+
+#### 메인 페이지에 보여줄 상품 데이터를 조회하는 메소드 추가
+
+```java
+package com.gxdxx.shop.service;
+
+...
+
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class ItemService {
+
+    ...
+
+    @Transactional(readOnly = true)
+    public Page<MainItemDto> getMainItemPage(ItemSearchDto itemSearchDto, Pageable pageable) {
+        return itemRepository.getMainItemPage(itemSearchDto, pageable);
+    }
+
+}
+```
+
+#### ItemController
+
+#### 메인 페이지에 상품 데이터를 보여주기 위해 클래스 수정
+
+```java
+package com.gxdxx.shop.controller;
+
+...
+
+@Controller
+@RequiredArgsConstructor
+public class MainController {
+
+    private final ItemService itemService;
+
+    @GetMapping(value = "/")
+    public String main(ItemSearchDto itemSearchDto, Optional<Integer> page, Model model) {
+
+        Pageable pageable = PageRequest.of(page.isPresent() ? page.get() : 0, 6);
+        Page<MainItemDto> items = itemService.getMainItemPage(itemSearchDto, pageable);
+
+        model.addAttribute("items", items);
+        model.addAttribute("itemSearchDto", itemSearchDto);
+        model.addAttribute("maxPage", 5);
+
+        return "main";
+    }
+
+}
+```
+
+## 상품 상제 페이지
+
+#### ItemController
+
+#### 상품 상세 페이지로 이동할 수 있도록 코드 추가
+
+```java
+package com.gxdxx.shop.controller;
+
+...
+
+@Controller
+@RequiredArgsConstructor
+public class ItemController {
+
+    ...
+
+    @GetMapping(value = "/item/{itemId}")
+    public String itemDtl(Model model, @PathVariable("itemId") Long itemId) {
+        ItemFormDto itemFormDto = itemService.getItemDtl(itemId);
+        model.addAttribute("item", itemFormDto);
+        return "item/itemDtl";
+    }
+
+}
+```
 
