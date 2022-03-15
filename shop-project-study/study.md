@@ -2177,3 +2177,251 @@ public class ItemController {
 ```
 
 1. 상품 수정 로직 호출
+
+---
+
+## 상품 관리
+
+현재 상품 상세 페이지에 진입할 때 상품 번호를 직접 URL에 입력해 진입했다. 상품 번호를 모르면 상세 페이지로 진입할 수 없기 때문에 등록된 상품 리스트를 조회할 수 있는 화면을 만든다.
+
+#### 조회 조건
+
+- 상품 등록일
+- 상품 판매 상태
+- 상품명 또는 상품 등록자 아이디
+
+조회 조건이 복잡하면 Querydsl을 이용해 조건에 맞는 쿼리를 동적으로 쉽게 생성할 수 있다. 또한 비슷한 쿼리를 재사용할 수 있고 자바 코드로 작성하기 때문에 IDE의 도움을 받아서 문법 오류를 바로 수정할 수 있다.
+
+Querydsl을 사용하기 위해서는 QDomain을 생성해야 하므로 메이븐의 컴파일 명령을 실행한다.
+
+#### ItemSearchDto
+
+#### 상품 데이터 조회 시 상품 조회 조건을 가진다.
+
+```java
+package com.gxdxx.shop.dto;
+
+...
+
+@Getter @Setter
+public class ItemSearchDto {
+
+    private String searchDateType;  // 1
+
+    private ItemSellStatus searchSellStatus;    // 2
+
+    private String searchBy;    // 3
+
+    private String searchQuery = "";    // 4
+
+}
+```
+
+1. 현재 시간과 상품 등록일을 비교해 상품 데이터 조회
+   - all: 상품 등록일 전체
+   - 1d: 최근 하루 동안 등록된 상품
+   - 1w: 최근 일주일 동안 등록된 상품
+   - 1m: 최근 한달 동안 등록된 상품
+   - 6m: 최근 6개월 동안 등록된 상품
+2. 상품의 판매 상태를 기준으로 상품 데이터 조회
+3. 상품을 조회할 때 어떤 유형으로 조회할지 선택
+    - itemName: 상품명
+    - createdBy: 상품 등록자 아이디
+4. 조회할 검색어 저장할 변수. searchBy를 기준으로 검색
+
+#### Querydsl을 Spring Data Jpa와 함께 사용하는 법
+
+1. 사용자 정의 인터페이스 작성
+2. 사용자 정의 인터페이스 구현
+3. Spring Data Jpa 리포지토리에서 사용자 정의 인터페이스 상속
+
+#### ItemRepositoryCustom
+
+#### 사용자 정의 인터페이스
+
+```java
+package com.gxdxx.shop.repository;
+
+...
+
+public interface ItemRepositoryCustom {
+
+    Page<Item> getAdminItemPage(ItemSearchDto itemSearchDto, Pageable pageable);    // 1
+
+}
+```
+
+1. 상품 조회 조건을 담고 있는 itemSearchDto 객체와 페이징 정보를 담고 있는 pageable 객체를 파라미터로 받는 getAdminItemPage 메소드 정의. 반환 데이터로 Page<Item> 객체를 반환
+
+#### ItemRepositoryCustomImpl
+
+#### 사용자 정의 인터페이스 구현
+
+```java
+package com.gxdxx.shop.repository;
+
+...
+
+public class ItemRepositoryCustomImpl implements ItemRepositoryCustom { // 1
+
+    private JPAQueryFactory queryFactory;   // 2
+
+    public ItemRepositoryCustomImpl(EntityManager em) { // 3
+        this.queryFactory = new JPAQueryFactory(em);
+    }
+
+    private BooleanExpression searchSellStatusEq(ItemSellStatus searchSellStatus) { // 4
+        return searchSellStatus == null ? null : QItem.item.itemSellStatus.eq(searchSellStatus);
+    }
+
+    private BooleanExpression regDtsAfter(String searchDateType) {  // 5
+        LocalDateTime dateTime = LocalDateTime.now();
+
+        if (StringUtils.equals("all", searchDateType) || searchDateType == null) {
+            return null;
+        } else if (StringUtils.equals("1d", searchDateType)) {
+            dateTime = dateTime.minusDays(1);
+        } else if (StringUtils.equals("1w", searchDateType)) {
+            dateTime = dateTime.minusWeeks(1);
+        } else if (StringUtils.equals("1m", searchDateType)) {
+            dateTime = dateTime.minusMonths(1);
+        } else if (StringUtils.equals("6m", searchDateType)) {
+            dateTime = dateTime.minusMonths(6);
+        }
+
+        return QItem.item.registerTime.after(dateTime);
+    }
+
+    private BooleanExpression searchByLike(String searchBy, String searchQuery) {   // 6
+
+        if (StringUtils.equals("itemName", searchBy)) {
+            return QItem.item.itemName.like("%" + searchQuery + "%");
+        } else if (StringUtils.equals("createdBy", searchBy)) {
+            return QItem.item.createdBy.like("%" + searchQuery + "%");
+        }
+
+
+        return null;
+    }
+
+    @Override
+    public Page<Item> getAdminItemPage(ItemSearchDto itemSearchDto, Pageable pageable) {
+        List<Item> content = queryFactory.selectFrom(QItem.item)    // 7
+                .where(regDtsAfter(itemSearchDto.getSearchDateType()),
+                        searchSellStatusEq(itemSearchDto.getSearchSellStatus()),
+                        searchByLike(itemSearchDto.getSearchBy(),
+                                itemSearchDto.getSearchQuery()))
+                .orderBy(QItem.item.id.desc())
+                .offset(pageable.getOffset())
+                .limit(pageable.getPageSize())
+                .fetch();
+
+        return new PageImpl<>(content, pageable, content.size());   // 8
+    }
+
+}
+```
+
+1. ItemRepositoryCustom을 상속받음
+2. 동적으로 쿼리를 생성하기 위해 JPAQueryFactory 클래스를 사용
+3. JPAQueryFactory의 생성자로 EntityManager 객체를 넣어줌
+4. 상품 판매 상태 조건이 전체(null)일 경우는 null을 리턴. 결과값이 null이면 where절에서 해당 조건은 무시되고 전체를 조회하고, null이 아니라 판매중 or 품절 상태이면 해당 조건의 상품만 저회
+5. searchDateType의 값에 따라 dateTime의 값을 이전 시간의 값으로 세팅 후 해당 시간 이후로 등록된 상품만 조회. 예를 들어 searchDateType 값이 "1m"인 경우 dateTime의 시간을 한달전으로 세팅 후 최근 한달동안 등록된 상품만 조회하도록 조건값을 반환
+6. searchBy의 값에 따라 상품명에 검색어를 포함하고 있는 상품 또는 상품 생성자의 아이디에 검색어를 포함하고 있는 상품을 조회하도록 조건값을 반환
+7. queryFactory를 이용해 쿼리를 생성
+    - selectFrom(QItem.item): 상품 데이터를 조회하기 위해 QItem의 item을 지정
+    - where 조건절: BooleanExpression을 반환하는 조건문들을 넣어줌. ',' 단위로 넣을 경우 and 조건으로 인식
+    - offset: 데이터를 가지고 올 시작 인덱스를 지정
+    - limit: 한 번에 가지고 올 최대 개수를 지정
+    - fetch(): 조회한 리스트를 반환
+8. 조회한 데이터를 Page 클래스의 구현체인 PageImpl 객체로 반환
+
+#### Querydsl 조회 결과를 반환하는 메소드
+
+|메소드|기능|
+|---|---|
+|List<T> fetch()|조회 대상 리스트 반환|
+|T fetchOne()|- 조회 대상이 1건이면 해당 타입 반환<br/>- 조회 대상이 1건 이상이면 에러 발생|
+|T fetchFirst()|조회 대상이 1건 또는 1건 이상이면 1건만 반환|
+
+#### ItemRepository
+
+#### ItemRepository 인터페이스에서 ItemRepositoryCustom 인터페이스를 상속
+
+```java
+package com.gxdxx.shop.repository;
+
+...
+
+public interface ItemRepository extends JpaRepository<Item, Long>, QuerydslPredicateExecutor<Item>, ItemRepositoryCustom {
+
+    ...
+
+}
+
+```
+
+#### ItemService
+
+#### 상품 조회 조건과 페이지 정보를 파라미터로 받아서 상품 데이터를 조회하는 getAdminItemPage() 메소드 추가
+
+```java
+package com.gxdxx.shop.service;
+
+...
+
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class ItemService {
+
+    ...
+
+    @Transactional(readOnly = true)
+    public Page<Item> getAdminItemPage(ItemSearchDto itemSearchDto, Pageable pageable) {
+        return itemRepository.getAdminItemPage(itemSearchDto, pageable);
+    }
+    
+}
+```
+
+#### ItemController
+
+#### 상품 관리 화면 이동 및 조회한 상품 데이터를 화면에 전달하는 로직 구현
+
+```java
+package com.gxdxx.shop.controller;
+
+...
+
+@Controller
+@RequiredArgsConstructor
+public class ItemController {
+
+    ...
+
+    @GetMapping(value = {"/admin/items", "/admin/items/{page}"})    // 1
+    public String itemManage(ItemSearchDto itemSearchDto, @PathVariable("page") Optional<Integer> page, Model model) {
+
+        Pageable pageable = PageRequest.of(page.isPresent() ? page.get() : 0, 3);   // 2
+
+        Page<Item> items = itemService.getAdminItemPage(itemSearchDto, pageable);   // 3
+
+        model.addAttribute("items", items); // 4
+        model.addAttribute("itemSearchDto", itemSearchDto); // 5
+        model.addAttribute("maxPage", 5);   // 6
+
+        return "item/itemManagement";
+    }
+
+}
+```
+
+1. value에 상품 관리 화면 진입 시 URL에 페이지 번호가 없는 경우와 페이지 번호가 있는 경우 2가지를 매핑
+2. 페이징을 의해 PageRequest.of 메소드를 통해 Pageable 객체를 생성. 첫 번째 파라미터로는 조회할 페이지 번호, 두 번째 파라미터로는 한 번에 가지고 올 데이터 수를 넣어줌. URL 경로에 페이지 번호가 있으면 해당 페이지를 조회하도록 세팅하고, 페이지 번호가 없으면 0페이지를 조히
+3. 조회 조건과 페이징 정보를 파라미터로 넘겨서 Page<Item> 객체를 반환 받음
+4. 조회한 상품 데이터 및 페이징 정보를 뷰에 전달
+5. 페이지 전환 시 기존 검색 조건을 유지한 채 이동할 수 있도록 뷰에 다시 전달
+6. 상품 관리 메뉴 하단에 보여줄 페이지 번호의 최대 개수. 5로 설정하면 최대 5개의 이동할 페이지 번호만 보여줌
+
+
