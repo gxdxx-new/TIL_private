@@ -2946,3 +2946,241 @@ class OrderServiceTest {
 4. 주문 번호를 이용해 저장된 주문 정보 조회
 5. 주문한 상품의 총 가격 계산
 6. 주문한 상품의 총 가격과 데이터베이스에 저장된 상품의 가격을 비교해 같으면 테스트가 성공
+
+## 주문 내역 조회
+
+#### OrderItemDto
+
+#### 조회한 주문 상품 정보를 화면에 보낼 때 사용할 DTO 클래스
+
+```java
+package com.gxdxx.shop.dto;
+
+...
+
+@Getter @Setter
+public class OrderItemDto {
+
+    public OrderItemDto(OrderItem orderItem, String imgUrl) {   // 1
+        this.itemName = orderItem.getItem().getItemName();
+        this.count = orderItem.getCount();
+        this.orderPrice = orderItem.getOrderPrice();
+        this.imgUrl = imgUrl;
+    }
+
+    private String itemName;
+
+    private int count;
+
+    private int orderPrice;
+
+    private String imgUrl;
+
+}
+```
+
+1. OrderItemDto 클래스의 생성자로 orderItem 객체와 이미지 경로를 파라미터로 받아서 멤버 변수 값을 세팅
+
+#### OrderHistoryDto
+
+#### 주문 정보를 담을 클래스
+
+````java
+package com.gxdxx.shop.dto;
+
+...
+
+@Getter @Setter
+public class OrderHistoryDto {
+
+    public OrderHistoryDto(Order order) {   // 1
+        this.orderId = order.getId();
+        this.orderDate = order.getOrderDate().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
+        this.orderStatus = order.getOrderStatus();
+    }
+
+    private Long orderId;
+
+    private String orderDate;
+
+    private OrderStatus orderStatus;
+
+    private List<OrderItemDto> orderItemDtoList = new ArrayList<>();
+
+    public void addOrderItemDto(OrderItemDto orderItemDto) {    // 2
+        orderItemDtoList.add(orderItemDto);
+    }
+
+}
+````
+
+1. OrderHistoryDto 클래스의 생성자로 order 객체를 파라미터로 받아서 멤버 변수 값을 세탕. 주문 날짜의 경우 화면에 "yyyy-MM-dd HH:mm" 형태로 전달하기 위해 포맷을 수정
+2. orderItemDto 객체를 주문 상품 리스트에 추가하는 메소드
+
+#### OrderRepository
+
+#### @Query 어노테이션을 이용해 주문 이력을 조회하는 쿼리 작성
+
+```java
+package com.gxdxx.shop.repository;
+
+...
+
+public interface OrderRepository extends JpaRepository<Order, Long> {
+
+    @Query("select o from Order o " +
+           "where o.member.email = :email " +
+           "order by o.orderDate desc"
+    )
+    List<Order> findOrders(@Param("email") String email, Pageable pageable);    // 1
+
+    @Query("select count(o) from Order o " +
+            "where o.member.email = :email"
+    )
+    Long countOrder(@Param("email") String email);  // 2
+
+}
+```
+
+1. 현재 로그인한 사용자의 주문 데이터를 페이징 조건에 맞춰서 조회
+2. 현재 로그인한 회원의 주문 개수가 몇 개인지 조회
+
+#### ItemImgRepository
+
+#### 주문 상품의 대표 이미지를 찾는 쿼리 메소드 추가 (구매 내역 페이지에서 주문 상품의 대표 이미지를 보여주기 위해)
+
+```java
+package com.gxdxx.shop.repository;
+
+...
+
+public interface ItemImgRepository extends JpaRepository<ItemImg, Long> {
+
+    List<ItemImg> findByItemIdOrderByIdAsc(Long itemId);
+
+    ItemImg findByItemIdAndRepImgYn(Long itemId, String repImgYn);
+
+}
+```
+
+#### OrderService
+
+#### 주문 목록을 조회하는 로직 구현
+
+```java
+package com.gxdxx.shop.service;
+
+import com.gxdxx.shop.dto.OrderDto;
+import com.gxdxx.shop.dto.OrderHistoryDto;
+import com.gxdxx.shop.dto.OrderItemDto;
+import com.gxdxx.shop.entity.*;
+import com.gxdxx.shop.repository.ItemImgRepository;
+import com.gxdxx.shop.repository.ItemRepository;
+import com.gxdxx.shop.repository.MemberRepository;
+import com.gxdxx.shop.repository.OrderRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.thymeleaf.util.StringUtils;
+
+import javax.persistence.EntityNotFoundException;
+import java.util.ArrayList;
+import java.util.List;
+
+@Service
+@Transactional
+@RequiredArgsConstructor
+public class OrderService {
+
+    private final ItemRepository itemRepository;
+    private final MemberRepository memberRepository;
+    private final OrderRepository orderRepository;
+    private final ItemImgRepository itemImgRepository;
+
+    ...
+
+    @Transactional(readOnly = true)
+    public Page<OrderHistoryDto> getOrderList(String email, Pageable pageable) {
+
+        List<Order> orders = orderRepository.findOrders(email, pageable);   // 1
+        Long totalCount = orderRepository.countOrder(email);    // 2
+
+        List<OrderHistoryDto> orderHistoryDtos = new ArrayList<>();
+
+        for (Order order : orders) {    // 3
+            OrderHistoryDto orderHistoryDto = new OrderHistoryDto(order);
+            List<OrderItem> orderItems = order.getOrderItems();
+            for (OrderItem orderItem : orderItems) {
+                ItemImg itemImg = itemImgRepository.findByItemIdAndRepImgYn(orderItem.getItem().getId(), "Y");  // 4
+                OrderItemDto orderItemDto = new OrderItemDto(orderItem, itemImg.getImgUrl());
+                orderHistoryDto.addOrderItemDto(orderItemDto);
+            }
+
+            orderHistoryDtos.add(orderHistoryDto);
+        }
+
+        return new PageImpl<OrderHistoryDto>(orderHistoryDtos, pageable, totalCount);   // 5
+    }
+    
+}
+```
+
+1. 유저의 아이디와 페이징 조건을 이용해 주문 목록을 조회
+2. 유저의 주문 총 개수를 계산
+3. 주문 목록 리스트를 순회하며 구매 이력 페이지에 전달할 DTO 생성
+4. 주문한 상품의 대표 이미지 조회
+5. 페이지 구현 객체를 생성해 반환
+
+#### OrderController
+
+#### 구매 내역을 조회하는 로직 호출 메소드 구현
+
+```java
+package com.gxdxx.shop.controller;
+
+...
+
+@Controller
+@RequiredArgsConstructor
+public class OrderController {
+
+    ...
+
+    @GetMapping(value = {"/orders", "/orders/{page}"})
+    public String orderHistory(@PathVariable("page") Optional<Integer> page, Principal principal, Model model) {
+        Pageable pageable = PageRequest.of(page.isPresent() ? page.get() : 0, 4);   // 1
+
+        Page<OrderHistoryDto> orderHistoryDtoList = orderService.getOrderList(principal.getName(), pageable);   // 2
+
+        model.addAttribute("orders", orderHistoryDtoList);
+        model.addAttribute("page", pageable.getPageNumber());
+        model.addAttribute("maxPage", 5);
+
+        return "order/orderHistory";
+    }
+    
+}
+```
+
+1. 한 번에 가지고 올 주문의 개수 4개로 설정
+2. 현재 로그인한 회원은 이메일과 페이징 객체를 파라미터로 전달해 화면에 전달할 주문 목록 데이터를 리턴 값으로 받음
+
+### OrderService 성능 향상
+
+OrderService 클래스에 getOrderList() 메소드에서 for문을 돌며 order.getOrderItems()를 호출할 때마다 조회 쿼리문이 추가로 실행된다.
+
+orders 리스트의 사이즈 만큼 쿼리문이 실행되는데, 만약 orders의 사이즈가 100이면 100번의 쿼리문이 더 실행되는 것이다.
+
+현재는 order_id에 하나의 주문 번호가 조건으로 설정되는데 orders의 주문 아이디를 "where order_id in (209, 210, 211, 212)" 이렇게 in 쿼리로 한 번에 조회할 수 있으면 100개가 실행될 쿼리를 하나의 쿼리로 조회할 수 있다.
+
+#### default_batch_size
+
+조회 쿼리 한 번으로 지정한 사이즈만큼 한 번에 조회할 수 있다.
+
+```
+spring.jpa.properties.hibernate.default_batch_fetch_size=100
+```
+
