@@ -3184,3 +3184,199 @@ orders 리스트의 사이즈 만큼 쿼리문이 실행되는데, 만약 orders
 spring.jpa.properties.hibernate.default_batch_fetch_size=100
 ```
 
+## 주문 취소
+
+#### 주문을 취소할 경우 해당 주문의 상태를 취소 상태로 만들고, 주문할 때 상품의 재고를 감소시켰던 만큼 다시 더해준다.
+
+#### Item
+
+#### 상품의 재고를 더해주기 위해 Item 클래스에 addStock 메소드 생성
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@Entity
+@Table(name = "item")
+@Getter @Setter
+@ToString
+public class Item extends BaseEntity {
+
+    ...
+
+    public void addStock(int stockQuantity) {   // 1
+        this.stockQuantity += stockQuantity;
+    }
+
+}
+```
+
+1. 상품의 재고를 증가시키는 메소드
+
+#### OrderItem
+
+#### 주문을 취소할 경우 주문 수량만큼 상품의 재고를 증가시키는 메소드 구현
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@Entity
+@Getter @Setter
+public class OrderItem extends BaseEntity {
+
+    ...
+
+    public void cancel() {  // 1
+        this.getItem().addStock(count);
+    }
+
+}
+```
+
+1. 주문 취소 시 주문 수량만큼 상품의 재고를 더해줌
+
+#### Order
+
+#### 주문 취소 시 주문 수량을 상품의 재고에 더해주는 로직과 주문 상태를 취소 상태로 바꿔주는 메소드 구현
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@Entity
+@Table(name = "orders")
+@Getter @Setter
+public class Order extends BaseEntity {
+
+    ...
+
+    public void cancelOrder() {
+        this.orderStatus = OrderStatus.CANCEL;
+
+        for (OrderItem orderItem : orderItems) {
+            orderItem.cancel();
+        }
+    }
+
+}
+```
+
+#### OrderService
+
+#### 주문 취소 로직 구현
+
+```java
+package com.gxdxx.shop.service;
+
+...
+
+@Service
+@Transactional
+@RequiredArgsConstructor
+public class OrderService {
+
+    ...
+
+    @Transactional(readOnly = true)
+    public boolean validateOrder(Long orderId, String email) {  // 1
+        Member currentMember = memberRepository.findByEmail(email);
+        Order order = orderRepository.findById(orderId).orElseThrow(EntityNotFoundException::new);
+        Member savedMember = order.getMember();
+
+        if (!StringUtils.equals(currentMember.getEmail(), savedMember.getEmail())) {
+            return false;
+        }
+
+        return true;
+    }
+
+    public void cancelOrder(Long orderId) {
+        Order order = orderRepository.findById(orderId).orElseThrow(EntityNotFoundException::new);
+        order.cancelOrder();    // 2
+    }
+
+}
+```
+
+1. 현재 로그인한 사용자와 주문 데이터를 생성한 사용자가 같은지 검사
+2. 주문 취소 상태로 변경하면 변경 감지 기능에 의해 트랜잭션이 끝날 때 update 쿼리가 실행됨
+
+#### OrderController
+
+#### 주문번호(orderId)를 비동기 요청으로 받아서 주문 취소 로직을 호출하는 메소드 생성
+
+```java
+package com.gxdxx.shop.controller;
+
+...
+
+@Controller
+@RequiredArgsConstructor
+public class OrderController {
+
+    ...
+    
+    @PostMapping("/order/{orderId}/cancel")
+    public @ResponseBody ResponseEntity cancelOrder(@PathVariable("orderId") Long orderId, Principal principal) {
+
+        if (!orderService.validateOrder(orderId, principal.getName())) {    // 1
+            return new ResponseEntity<String>("주문 취소 권한이 없습니다.", HttpStatus.FORBIDDEN);
+        }
+
+        orderService.cancelOrder(orderId);  // 2
+        return new ResponseEntity<Long>(orderId, HttpStatus.OK);
+    }
+
+}
+```
+
+1. 자바스크립트에서 취소할 주문 번호는 조작이 가능하므로 다른 사람의 주문을 취소하지 못하도록 주문 취소 권한 검사
+2. 주문 취소 로직 호출
+
+#### OrderServiceTest
+
+#### 주문 취소 로직 테스트
+
+```java
+package com.gxdxx.shop.service;
+
+...
+
+@SpringBootTest
+@Transactional
+@TestPropertySource(locations = "classpath:application-test.properties")
+class OrderServiceTest {
+
+    ...
+
+    @Test
+    @DisplayName("주문 취소 테스트")
+    public void cancelOrder() {
+        Item item = saveItem(); // 1
+        Member member  = saveMember();  // 1
+
+        OrderDto orderDto = new OrderDto();
+        orderDto.setCount(10);
+        orderDto.setItemId(item.getId());
+        Long orderId = orderService.order(orderDto, member.getEmail()); // 2
+
+        Order order = orderRepository.findById(orderId).orElseThrow(EntityNotFoundException::new);  // 3
+        orderService.cancelOrder(orderId);  // 4
+
+        assertEquals(OrderStatus.CANCEL, order.getOrderStatus());   // 5
+        assertEquals(100, item.getStockQuantity()); // 6
+    }
+
+}
+```
+
+1. 테스트를 위해 상품과 회원 데이터 생성
+2. 테스트를 위해 주문 데이터 생성
+3. 생성한 주문 엔티티 조회
+4. 해당 주문 취소
+5. 주문의 상태가 취소 상태이면 테스트 통과
+6. 취소 후 상품의 재고가 처음 재고와 동일하면 테스트 통과
