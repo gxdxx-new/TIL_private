@@ -3666,3 +3666,304 @@ public class CartServiceTest {
 4. 장바구니 상품 id를 이용해 생성된 장바구니 상품 정보 조회
 5. 상품 id와 장바구니에 저장된 상품 id가 같으면 테스트 통과
 6. 장바구니에 담았던 수량과 실제로 장바구니에 저장된 수량이 같으면 테스트 통과
+
+## 장바구니 조회
+
+#### CartDetailDto
+
+#### 장바구니 조회 페이지에 전달할 DTO
+
+```java
+package com.gxdxx.shop.dto;
+
+...
+
+@Getter @Setter
+public class CartDetailDto {
+
+    private Long cartItemId;
+
+    private String itemName;
+
+    private int price;
+
+    private int count;
+
+    private String imgUrl;
+
+    public CartDetailDto(Long cartItemId, String itemName, int price, int count, String imgUrl) {   // 1
+        this.cartItemId = cartItemId;
+        this.itemName = itemName;
+        this.price = price;
+        this.count = count;
+        this.imgUrl = imgUrl;
+    }
+
+}
+```
+
+1. 장바구니 페이지에 전달할 데이터를 생성자의 파라미터로 만들어줌
+
+#### CartItemRepository
+
+#### 장바구니 페이지에 전달할 CartDetailDto 리스트를 쿼리 하나로 조회하는 JPQL문 작성
+
+- 연관 관계 매핑을 지연 로딩으로 설정할 경우 엔티티에 매핑된 다른 엔티티를 조회할 때 추가적으로 쿼리문이 실행된다.
+- 따라서 성능 최적화가 필요할 경우 DTO의 생성자를 이용해 반환 값으로 DTO 객체를 생성할 수 있다.
+
+```java
+package com.gxdxx.shop.repository;
+
+...
+
+public interface CartItemRepository extends JpaRepository<CartItem, Long> {
+
+    ...
+
+    @Query("select new com.gxdxx.shop.dto.CartDetailDto(ci.id, i.itemName, i.price, ci.count, im.imgUrl) " +    // 1
+    "from CartItem ci, ItemImg im " +
+    "join ci.item i " +
+    "where ci.cart.id = :cartId " +
+    "and im.item.id = ci.item.id " +    // 2
+    "and im.repImgYn = 'y' " +  // 2
+    "order by ci.registerTime desc"
+    )
+    List<CartDetailDto> findCartDetailDtoList(Long cartId);
+
+}
+```
+
+1. CartDetailDto의 생성자를 이용해 DTO를 반환할 때는 new 키워드와 해당 DTO의 패키지, 클래스명을 적어줌. 생성자의 파라미터 순서도 DTO 클래스에 명시한 순으로 넣어줘야 함
+2. 장바구니에 담겨있는 상품의 대표 이미지만 가져오도록 조건문 작성
+
+#### CartService
+
+#### 현재 로그인한 회원의 정보를 이용해 장바구니에 들어있는 상품을 조회하는 로직 작성
+
+```java
+package com.gxdxx.shop.service;
+
+...
+
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class CartService {
+
+    ...
+    
+    @Transactional(readOnly = true)
+    public List<CartDetailDto> getCartList(String email) {
+
+        List<CartDetailDto> cartDetailDtoList = new ArrayList<>();
+
+        Member member = memberRepository.findByEmail(email);
+        Cart cart = cartRepository.findByMemberId(member.getId());  // 1
+        if (cart == null) { // 2
+            return cartDetailDtoList;
+        }
+
+        cartDetailDtoList = cartItemRepository.findCartDetailDtoList(cart.getId()); // 3
+
+        return cartDetailDtoList;
+    }
+    
+}
+```
+
+1. 현재 로그인한 회원의 장바구니 엔티티 조회
+2. 장바구니에 상품을 한 번도 안 담았을 경우 장바구니 엔티티가 없으므로 빈 리스트 반환
+3. 장바구니에 담겨있는 상품 정보 조회
+
+#### CartController
+
+#### 장바구니 페이지로 이동할 수 있도록 메소드 추가
+
+```java
+package com.gxdxx.shop.controller;
+
+...
+
+@Controller
+@RequiredArgsConstructor
+public class CartController {
+
+    ...
+
+    @GetMapping(value = "/cart")
+    public String orderHistory(Principal principal, Model model) {
+        List<CartDetailDto> cartDetailList = cartService.getCartList(principal.getName());  // 1
+
+        model.addAttribute("cartItems", cartDetailList);    // 2
+
+        return "cart/cartList";
+    }
+
+}
+```
+
+1. 현재 로그인한 사용자의 이메일 정보를 이용해 장바구니에 담겨있는 상품 정보 조회
+2. 조회한 장바구니 상품 정보를 뷰로 전달
+
+#### CartItem
+
+#### 장바구니에서 상품의 수량을 변경할 때 실시간으로 해당 회원의 장바구니 상품의 수량도 변경하도록 로직 추가
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@Entity
+@Getter @Setter
+@ToString
+public class CartItem extends BaseEntity {
+
+    ...
+
+    public void updateCount(int count) {
+        this.count = count;
+    }
+
+}
+```
+
+#### CartService
+
+#### 장바구니 상품의 수량을 업데이트하는 로직 추가
+
+- 자바스크립트 코드에서 업데이트할 장바구니 상품 번호는 조작이 가능하므로 현재 로그인한 회원과 해당 장바구니 상품을 저장한 회원이 같은지 검사하는 로직도 추가
+
+```java
+package com.gxdxx.shop.service;
+
+...
+
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class CartService {
+
+    ...
+
+    @Transactional(readOnly = true)
+    public boolean validateCartItem(Long cartItemId, String email) {
+        Member currentMember = memberRepository.findByEmail(email); // 1
+        CartItem cartItem = cartItemRepository.findById(cartItemId).orElseThrow(EntityNotFoundException::new);
+        Member savedMember = cartItem.getCart().getMember();    // 2
+
+        if (!StringUtils.equals(currentMember.getEmail(), savedMember.getEmail())) {    // 3
+            return false;
+        }
+
+        return true;    // 3
+    }
+
+    public void updateCartItemCount(Long cartItemId, int count) {   // 4
+        CartItem cartItem = cartItemRepository.findById(cartItemId).orElseThrow(EntityNotFoundException::new);
+
+        cartItem.updateCount(count);
+    }
+    
+}
+```
+
+1. 현재 로그인한 회원 조회
+2. 장바구니 상품을 저장한 회원을 조회
+3. 현재 로그인한 회원과 장바구니 상품을 저장한 회원이 다를 경우 false, 같으면 true 반환
+4. 장바구니 상품의 수량을 업데이트하는 메소드
+
+#### CartController
+
+#### 장바구니 상품의 수량을 업데이트하는 요청을 처리할 수 있도록 로직 추가
+
+```java
+package com.gxdxx.shop.controller;
+
+...
+
+@Controller
+@RequiredArgsConstructor
+public class CartController {
+
+    ...
+
+    @PatchMapping(value = "/cartItem/{cartItemId}") // 1
+    public @ResponseBody ResponseEntity updateCartItem(
+            @PathVariable("cartItemId") Long cartItemId, int count, Principal principal) {
+
+        if (count <= 0) {   // 2
+            return new ResponseEntity<String>("최소 1개 이상 담아주세요.", HttpStatus.BAD_REQUEST);
+        } else if (!cartService.validateCartItem(cartItemId, principal.getName())) {    // 3
+            return new ResponseEntity<String>("수정 권한이 없습니다.", HttpStatus.FORBIDDEN);
+        }
+
+        cartService.updateCartItemCount(cartItemId, count); // 4
+        return new ResponseEntity<Long>(cartItemId, HttpStatus.OK);
+    }
+
+}
+```
+
+1. HTTP 메소드에서 PATCH는 요청된 자원의 일부를 업데이트할 때 사용. 장바구니 상품의 수량만 업데이트하기 때문에 @PatchMapping 사용
+2. 장바구니에 담겨있는 상품의 개수를 0개 이하로 업데이트 요청할 때 에러 메시지를 담아 반환
+3. 수정 권한 체크
+4. 장바구니 상품의 개수 업데이트
+
+#### CartService
+
+#### 장바구니 상품 id를 파라미터로 받아 삭제하는 로직 추가
+
+```java
+package com.gxdxx.shop.service;
+
+...
+
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class CartService {
+
+    ...
+    
+    public void deleteCartItem(Long cartItemId) {
+        CartItem cartItem = cartItemRepository.findById(cartItemId).orElseThrow(EntityNotFoundException::new);
+        cartItemRepository.delete(cartItem);
+    }
+    
+}
+```
+
+#### CartController
+
+#### 장바구니 상품을 삭제하는 요청을 처리할 수 있도록 로직 추가
+
+```java
+package com.gxdxx.shop.controller;
+
+...
+
+@Controller
+@RequiredArgsConstructor
+public class CartController {
+
+    ...
+
+    @DeleteMapping(value = "/cartItem/{cartItemId}")    // 1
+    public @ResponseBody ResponseEntity deleteCartItem(
+            @PathVariable("cartItemId") Long cartItemId, Principal principal) {
+
+        if (!cartService.validateCartItem(cartItemId, principal.getName())) {   // 2
+            return new ResponseEntity<String>("수정 권한이 없습니다.", HttpStatus.FORBIDDEN);
+        }
+
+        cartService.deleteCartItem(cartItemId); // 3
+        return new ResponseEntity<Long>(cartItemId, HttpStatus.OK);
+    }
+
+}
+```
+
+1. HTTP 메소드에서 DELETE의 경우 요청된 자원을 삭제할 때 사용. 장바구니 상품을 삭제하기 때문에 DeleteMapping 사용
+2. 수정 권한 체크
+3. 해당 장바구니 상품 삭제
