@@ -3967,3 +3967,166 @@ public class CartController {
 1. HTTP 메소드에서 DELETE의 경우 요청된 자원을 삭제할 때 사용. 장바구니 상품을 삭제하기 때문에 DeleteMapping 사용
 2. 수정 권한 체크
 3. 해당 장바구니 상품 삭제
+
+## 장바구니 주문
+
+#### 장바구니에서 주문을 하면 여러 개의 상품을 하나의 주문에 담을 수 있어야 하고, 주문한 상품은 장바구니에서 삭제해야 한다.
+
+#### CartOrderDto
+
+#### 장바구니 페이지에서 주문할 상품 데이터를 전달할 DTO
+
+```java
+package com.gxdxx.shop.dto;
+
+...
+
+@Getter @Setter
+public class CartOrderDto {
+
+    private Long cartItemId;
+
+    private List<CartOrderDto> cartOrderDtoList;    // 1
+
+}
+```
+
+1. 장바구니에서 여러 개의 상품을 주문하므로 CartOrderDto 클래스가 자기 자신을 List로 가지고 있도록 만듦
+
+#### OrderService
+
+#### 장바구니에서 주문할 상품 데이터를 전달받아서 주문을 생성하는 로직 작성
+
+```java
+package com.gxdxx.shop.service;
+
+...
+
+@Service
+@Transactional
+@RequiredArgsConstructor
+public class OrderService {
+
+    ...
+
+    public Long orders(List<OrderDto> orderDtoList, String email) {
+
+        Member member = memberRepository.findByEmail(email);
+        List<OrderItem> orderItemList = new ArrayList<>();
+
+        for (OrderDto orderDto : orderDtoList) {    // 1
+            Item item = itemRepository.findById(orderDto.getItemId()).orElseThrow(EntityNotFoundException::new);
+
+            OrderItem orderItem = OrderItem.createOrderItem(item, orderDto.getCount());
+            orderItemList.add(orderItem);
+        }
+
+        Order order = Order.createOrder(member, orderItemList); // 2
+        orderRepository.save(order);    // 3
+
+        return order.getId();
+    }
+
+}
+```
+
+1. 주문할 상품 리스트 생성
+2. 현재 로그인한 회원과 주문 상품 목록을 이용해 주문 엔티티 생성
+3. 주문 데이터 저장
+
+#### CartService
+
+#### 주문 로직으로 전달할 orderDto 리스트 생성 및 주문 로직 호출, 주문한 상품은 장바구니에서 제거하는 로직 구현
+
+```java
+package com.gxdxx.shop.service;
+
+...
+
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class CartService {
+
+    private final ItemRepository itemRepository;
+    private final MemberRepository memberRepository;
+    private final CartRepository cartRepository;
+    private final CartItemRepository cartItemRepository;
+    private final OrderService orderService;
+
+    ...
+
+    public Long orderCartItem(List<CartOrderDto> cartOrderDtoList, String email) {
+        List<OrderDto> orderDtoList = new ArrayList<>();
+        for (CartOrderDto cartOrderDto : cartOrderDtoList) {    // 1
+            CartItem cartItem = cartItemRepository
+                    .findById(cartOrderDto.getCartItemId())
+                    .orElseThrow(EntityNotFoundException::new);
+
+            OrderDto orderDto = new OrderDto();
+            orderDto.setItemId(cartItem.getItem().getId());
+            orderDto.setCount(cartItem.getCount());
+            orderDtoList.add(orderDto);
+        }
+
+        Long orderId = orderService.orders(orderDtoList, email);    // 2
+
+        for (CartOrderDto cartOrderDto : cartOrderDtoList) {    // 3
+            CartItem cartItem = cartItemRepository
+                    .findById(cartOrderDto.getCartItemId())
+                    .orElseThrow(EntityNotFoundException::new);
+            cartItemRepository.delete(cartItem);
+        }
+
+        return orderId;
+    }
+
+}
+```
+
+1. 장바구니 페이지에서 전달받은 주문 상품 번호를 이용해 주문 로직으로 전달할 orderDto 객체를 생성
+2. 장바구니에 담은 상푸믈 주문하도록 주문 로직 호출
+3. 주문한 상품들을 장바구니에서 제거
+
+#### CartController
+
+#### 장바구니 상품의 수량을 업데이트하는 요청을 처리할 수 있도록 로직 추가
+
+```java
+package com.gxdxx.shop.controller;
+
+...
+
+@Controller
+@RequiredArgsConstructor
+public class CartController {
+
+    ...
+    
+    @PostMapping(value = "/cart/orders")
+    public @ResponseBody ResponseEntity orderCartItem
+            (@RequestBody CartOrderDto cartOrderDto, Principal principal) {
+
+        List<CartOrderDto> cartOrderDtoList = cartOrderDto.getCartOrderDtoList();
+
+        if (cartOrderDtoList == null || cartOrderDtoList.size() == 0) { // 1
+            return new ResponseEntity<String>("주문할 상품을 선택해주세요.", HttpStatus.FORBIDDEN);
+        }
+
+        for (CartOrderDto cartOrder : cartOrderDtoList) {   // 2
+            if (!cartService.validateCartItem(cartOrder.getCartItemId(), principal.getName())) {
+                return new ResponseEntity<String>("주문 권한이 없습니다.", HttpStatus.FORBIDDEN);
+            }
+        }
+
+        Long orderId = cartService.orderCartItem(cartOrderDtoList, principal.getName());    // 3
+        return new ResponseEntity<Long>(orderId, HttpStatus.OK);    // 4
+    }
+
+}
+```
+
+1. 주문할 상품을 선택하지 않았는지 체크
+2. 주문 권한 체크
+3. 주문 로직 호출 결과 생성된 주문 번호를 반환 받음
+4. 생성된 주문 번호와 요청이 성공했다는 HTTP 응답 상태 코드 반환
