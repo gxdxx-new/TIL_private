@@ -3380,3 +3380,289 @@ class OrderServiceTest {
 4. 해당 주문 취소
 5. 주문의 상태가 취소 상태이면 테스트 통과
 6. 취소 후 상품의 재고가 처음 재고와 동일하면 테스트 통과
+
+## 장바구니 담기
+
+#### CartItemDto
+
+#### 상품 상세 페이지에서 장바구니에 담을 상품의 id와 수량을 전달 받을 CartItemDto 클래스 생성
+
+```java
+package com.gxdxx.shop.dto;
+
+...
+
+@Getter @Setter
+public class CartItemDto {
+
+    @NotNull(message = "상품 아이디는 필수 입력값입니다.")
+    private Long itemId;
+
+    @Min(value = 1, message = "최소 1개 이상 담아주세요")
+    private int count;
+
+}
+```
+
+#### Cart
+
+#### 회원 한 명당 1개의 장바구니를 가지므로 처음 장바구니에 상품을 담을 때는 해당 회원의 장바구니를 생성해줘야 한다.
+
+#### Cart 클래스에 회원 엔티티를 파라미터로 받아서 장바구니 엔티티를 생성하는 로직 추가
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@Entity
+@Table(name = "cart")
+@Getter @Setter
+@ToString
+public class Cart extends BaseEntity {
+
+    ...
+
+    public static Cart createCart(Member member) {
+        Cart cart = new Cart();
+        cart.setMember(member);
+        return cart;
+    }
+
+}
+```
+
+#### CartItem
+
+#### 장바구니에 담을 상품 엔티티를 생성하는 메소드와 장바구니에 담을 수량을 증가시켜 주는 메소드 추가
+
+```java
+package com.gxdxx.shop.entity;
+
+...
+
+@Entity
+@Getter @Setter
+@ToString
+public class CartItem extends BaseEntity {
+
+    ...
+
+    public static CartItem createCartItem(Cart cart, Item item, int count) {
+        CartItem cartItem = new CartItem();
+        cartItem.setCart(cart);
+        cartItem.setItem(item);
+        cartItem.setCount(count);
+        return cartItem;
+    }
+
+    public void addCount(int count) {   // 1
+        this.count += count;
+    }
+    
+}
+```
+
+1. 장바구니에 기존에 담겨 있는 상품인데, 해당 상품을 추가로 장바구니에 담을 때 기존 수량에 현재 담을 수량을 더해줄 때 사용할 메소드
+
+#### CartRepository
+
+#### 현재 로그인한 회원의 Cart 엔티티를 찾기 위해 쿼리 메소드 추가
+
+```java
+package com.gxdxx.shop.repository;
+
+...
+
+public interface CartRepository extends JpaRepository<Cart, Long> {
+
+    Cart findByMemberId(Long memberId);
+
+}
+```
+
+#### CartItemRepository
+
+#### 장바구니에 들어갈 상품을 저장하거나 조회하기 위해 인터페이스 생성하고 쿼리 메소드 추가
+
+```java
+package com.gxdxx.shop.repository;
+
+...
+
+public interface CartItemRepository extends JpaRepository<CartItem, Long> {
+
+    CartItem findByCartIdAndItemId(Long cartId, Long itemId);   // 1
+
+}
+```
+
+1. 카트 id와 상품 id를 이용해 상품이 장바구니에 들어있는지 조회
+
+#### CartService
+
+#### 장바구니에 상품을 담는 로직 추가
+
+```java
+package com.gxdxx.shop.service;
+
+...
+
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class CartService {
+
+    private final ItemRepository itemRepository;
+    private final MemberRepository memberRepository;
+    private final CartRepository cartRepository;
+    private final CartItemRepository cartItemRepository;
+
+    public Long addCart(CartItemDto cartItemDto,String email) {
+        Item item = itemRepository.findById(cartItemDto.getItemId()).orElseThrow(EntityNotFoundException::new); // 1
+        Member member = memberRepository.findByEmail(email);    // 2
+
+        Cart cart = cartRepository.findByMemberId(member.getId());  // 3
+        if (cart == null) { // 4
+            cart = Cart.createCart(member);
+            cartRepository.save(cart);
+        }
+
+        CartItem savedCartItem = cartItemRepository.findByCartIdAndItemId(cart.getId(), item.getId());  // 5
+
+        if (savedCartItem != null) {
+            savedCartItem.addCount(cartItemDto.getCount()); // 6
+            return savedCartItem.getId();
+        }
+        CartItem cartItem = CartItem.createCartItem(cart, item, cartItemDto.getCount());    // 7
+        cartItemRepository.save(cartItem);  // 8
+        return cartItem.getId();
+    }
+
+}
+```
+
+1. 장바구니에 담을 상품 엔티티 조회
+2. 현재 로그인한 회원 엔티티 조회
+3. 현재 로그인한 회원의 장바구니 엔티티 조회
+4. 상품을 처음으로 장바구니에 담을 경우 해당 회원의 장바구니 엔티티 생성
+5. 현재 상품이 장바구니에 이미 들어가 있는지 조회
+6. 장바구니에 이미 있던 상품일 경우 기존 수량에 현재 장바구니에 담을 수량 만큼을 더해줌
+7. 장바구니 엔티티, 상품 엔티티, 장바구니에 담을 수량을 이용해 CartItem 엔티티 생성
+8. 장바구니에 들어갈 상품 저장
+
+#### CartController
+
+```java
+package com.gxdxx.shop.controller;
+
+...
+
+@Controller
+@RequiredArgsConstructor
+public class CartController {
+
+    private final CartService cartService;
+
+    @PostMapping(value = "/cart")
+    public @ResponseBody
+    ResponseEntity order(@RequestBody @Valid CartItemDto cartItemDto, BindingResult bindingResult, Principal principal) {
+
+        if (bindingResult.hasErrors()) {    // 1
+            StringBuilder sb = new StringBuilder();
+            List<FieldError> fieldErrors = bindingResult.getFieldErrors();
+            for (FieldError fieldError : fieldErrors) {
+                sb.append(fieldError.getDefaultMessage());
+            }
+            return new ResponseEntity<String>(sb.toString(), HttpStatus.BAD_REQUEST);
+        }
+
+        String email = principal.getName(); // 2
+        Long cartItemId;
+
+        try {
+            cartItemId = cartService.addCart(cartItemDto, email);   // 3
+        } catch (Exception e) {
+            return new ResponseEntity<String>(e.getMessage(), HttpStatus.BAD_REQUEST);
+        }
+
+        return new ResponseEntity<Long>(cartItemId, HttpStatus.OK); // 4
+    }
+
+}
+```
+
+1. 장바구니에 담을 상품 정보를 받는 cartItemDto 객체에 데이터 바인딩 시 에러가 있는지 검사
+2. 현재 로그인한 회원의 이메일 정보를 변수에 저장
+3. 화면으로부터 넘어온 장바구니에 담을 상품 정보와 현재 로그인한 회원의 이메일 정보를 이용해 장바구니에 상품을 담는 로직 호출
+4. 결과값으로 생성된 장바구니 상품 id와 요청이 성공했다는 HTTP 응답 상태 코드 반환
+
+#### CartServiceTest
+
+#### 장바구니 담기 테스트
+
+```java
+package com.gxdxx.shop.service;
+
+...
+
+@SpringBootTest
+@Transactional
+@TestPropertySource(locations = "classpath:application-test.properties")
+public class CartServiceTest {
+
+    @Autowired
+    ItemRepository itemRepository;
+
+    @Autowired
+    MemberRepository memberRepository;
+
+    @Autowired
+    CartService cartService;
+
+    @Autowired
+    CartItemRepository cartItemRepository;
+
+    public Item saveItem() {    // 1
+        Item item = new Item();
+        item.setItemName("테스트 상품");
+        item.setPrice(10000);
+        item.setItemDescription("테스트 상품 상세 설명");
+        item.setItemSellStatus(ItemSellStatus.SELL);
+        item.setStockQuantity(100);
+        return itemRepository.save(item);
+    }
+
+    public Member saveMember() {    // 1
+        Member member = new Member();
+        member.setEmail("test@test.com");
+        return memberRepository.save(member);
+    }
+
+    @Test
+    @DisplayName("장바구니 담기 테스트")
+    public void addCart() {
+        Item item = saveItem();
+        Member member = saveMember();
+
+        CartItemDto cartItemDto = new CartItemDto();
+        cartItemDto.setCount(5);    // 2
+        cartItemDto.setItemId(item.getId());    // 2
+
+        Long cartItemId = cartService.addCart(cartItemDto, member.getEmail());  // 3
+
+        CartItem cartItem = cartItemRepository.findById(cartItemId).orElseThrow(EntityNotFoundException::new);  // 4
+
+        Assertions.assertEquals(item.getId(), cartItem.getItem().getId());  // 5
+        Assertions.assertEquals(cartItemDto.getCount(), cartItem.getCount());   // 6
+    }
+
+}
+```
+
+1. 테스트를 위해 장바구니에 담을 상품과 회원 정보를 저장하는 메소드 생성
+2. 장바구니에 담을 상품과 수량을 cartItemDto 객체에 세팅
+3. 상품을 장바구니에 담는 로직 호출 결과 생성된 장바구니 상품 id를 cartItemId 변수에 저장
+4. 장바구니 상품 id를 이용해 생성된 장바구니 상품 정보 조회
+5. 상품 id와 장바구니에 저장된 상품 id가 같으면 테스트 통과
+6. 장바구니에 담았던 수량과 실제로 장바구니에 저장된 수량이 같으면 테스트 통과
