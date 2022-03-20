@@ -204,6 +204,11 @@ public class Member {
 - 엔티티의 식별자는 id를 사용하고 PK 컬럼명은 member_id를 사용한다.
 - 엔티티는 타입(Member 등)이 있으므로 id 필드만으로 쉽게 구분할 수 있지만 테이블은 타입이 없어서 구분이 힘들다.
 
+#### 식별자에 long 대신에 Long 사용하는 이유
+
+- 엔티티를 처음 new로 생성하는 시점에는 값이 없으므로 null인 상태가 필요
+- 기본형 long은 null 값을 가질 수 없으므로 참조형인 Long 을 사용
+
 ### 주문 엔티티
 
 ```java
@@ -1333,23 +1338,101 @@ public class OrderRepository {
 
 ## 웹 계층 개발
 
+### 홈 컨트롤러 등록
+
+```java
+package com.gxdxx.jpa.controller;
+
+...
+
+@Controller
+@Slf4j
+public class HomeController {
+
+    @RequestMapping("/")
+    public String home() {
+        log.info("home controller");
+        return "home";
+    }
+}
+
+```
+
+### 스프링 부트 타임리프 viewName 매핑
+
+- resources:templates/ + {ViewName} + .html
+- ex) resources:templates/home.html
+
 ### 회원 등록
+
+#### 회원 등록 폼 객체
+
+#### 폼 객체를 사용해서 화면 계층과 서비스 계층을 명확하게 분리한다.
+
+```java
+package com.gxdxx.jpa.controller;
+
+...
+
+@Getter @Setter
+public class MemberForm {
+
+    @NotEmpty(message = "회원 이름은 필수입니다.")
+    private String name;
+
+    private String city;
+    private String street;
+    private String zipcode;
+}
+```
+
+#### 회원 등록 컨트롤러
+
+```java
+package com.gxdxx.jpa.controller;
+
+...
+
+@Controller
+@RequiredArgsConstructor
+public class MemberController {
+
+  private final MemberService memberService;
+
+  @GetMapping("/members/new")
+  public String createForm(Model model) {
+    model.addAttribute("memberForm", new MemberForm());
+    return "members/createMemberForm";
+  }
+
+  @PostMapping("/members/new")
+  public String create(@Valid MemberForm form, BindingResult result) {
+
+    if (result.hasErrors()) {
+      return "members/createMemberForm";
+    }
+
+    Address address = new Address(form.getCity(), form.getStreet(), form.getZipcode());
+
+    memberService.join(form.getName(), address);
+    return "redirect:/";
+  }
+  
+}
+```
+
+#### model
+
+- model.addAttribute()에 넣으면 컨트롤러에서 뷰로 넘어갈 때 데이터를 넘긴다.
 
 #### BindingResult
 
-- 검증에서 오류가 있을때 BindingResult에 담기게 해서 컨트롤러에서 오류 처리를 가능하게 해준다.
+- @Valid가 MemberForm에 설정한 validation들을 확인해준다. 
+- form에 오류가 있으면 BindingResult에 담기게 해서 컨트롤러에서 오류 처리를 가능하게 해준다.
 
 #### Model에 빈 MemberForm을 넣는 이유
-- 뷰 템플릿에서 form을 구성할 때 잘못된 이름을 넣으면 오류가 발생한다는 뜻입니다.
-- 1. 등록폼을 로딩할 때와 2. 등록에 실패했을 때 다시 같은 뷰로 돌아갈 때에 같은 뷰 템블릿을 그대로 재사용할 수 있습니다. 
-
-#### 엔티티를 최대한 순수하게 유지(어떤곳에 의존하지 않고 핵심 비즈니스 로직에만 의존하도록)
-
-- 유지보수성이 높아짐
-- 화면을 위한 로직에는 의존하지 않도록
-- api를 만들때는 엔티티를 절대로 외부로 반환하면 안된다.
-
-#### **merge를 하고 반환된 객체가 영속성 컨텍스트에서 관리되고 파라미터로 넘겼던 객체는 영속성 상태로 변하지 않는다.**
+- 뷰 템플릿에서 form을 구성할 때 잘못된 이름을 넣으면 오류가 발생나게 해준다. 
+- 등록폼을 로딩할 때와 등록에 실패해서 다시 같은 뷰로 돌아갈 때에 같은 뷰 템블릿을 그대로 재사용할 수 있다.
 
 #### 컨트롤러에서 Member, Order을 find해서 넘기지 않고 id를 service로 넘기는 이유
 
@@ -1358,13 +1441,434 @@ public class OrderRepository {
   - 값을 변경하지는 못하지만 객체를 넘겨받은 트랜잭션 내에서 변경감지가 일어날 때 update가 되버린다.
 - open-in-view: false 이면 영속성 컨텍스트에 올라가지 않아 변경이 불가능하고, 트랜잭션에서 넘겨받아 사용하려고 할 때도 에러가 난다.
 
+#### 회원 등록 폼 화면
+
+```html
+<!DOCTYPE HTML>
+<html xmlns:th="http://www.thymeleaf.org">
+<head th:replace="fragments/header :: header" />
+<style>
+ .fieldError {
+ border-color: #bd2130;
+ }
+</style>
+<body>
+<div class="container">
+ <div th:replace="fragments/bodyHeader :: bodyHeader"/>
+ <form role="form" action="/members/new" th:object="${memberForm}" method="post">
+    <div class="form-group">
+        <label th:for="name">이름</label>
+        <input type="text" th:field="*{name}" class="form-control" placeholder="이름을 입력하세요"
+                th:class="${#fields.hasErrors('name')}? 'form-control fieldError' : 'form-control'">
+        <p th:if="${#fields.hasErrors('name')}" th:errors="*{name}">Incorrect date</p>
+    </div>
+    
+   <div class="form-group">
+        <label th:for="city">도시</label>
+        <input type="text" th:field="*{city}" class="form-control" placeholder="도시를 입력하세요">
+    </div>
+ 
+   <div class="form-group">
+        <label th:for="street">거리</label>
+        <input type="text" th:field="*{street}" class="form-control" placeholder="거리를 입력하세요">
+    </div>
+ 
+   <div class="form-group">
+        <label th:for="zipcode">우편번호</label>
+        <input type="text" th:field="*{zipcode}" class="form-control" placeholder="우편번호를 입력하세요">
+    </div>
+ 
+   <button type="submit" class="btn btn-primary">Submit</button>
+ </form>
+ <br/>
+  <div th:replace="fragments/footer :: footer" />
+</div> <!-- /container -->
+</body>
+</html>
 ```
-**엔티티를 처음 new로 생성하는 시점에는 값이 없으므로 null인 상태가 필요합니다. 따라서 기본형 long은 null 값을 가질 수 없으므로 참조형인 Long 을 사용합니다^^**
-**식별자에 long 대신에 Long을 사용한 이유는, 엔티티를 처음 생성한 시점에는 식별자가 없기 때문입니다.
 
-엔티티를 생성하고, JPA를 통해 DB에 저장하는 시점이 되어야 값이 설정되기 때문이지요.
+### 회원 목록 조회
 
-결국 null을 유지할 수 있는 상태가 필요합니다^^
+#### 회원 목록 컨트롤러
 
-그래서 식별자에만 long 대신에 Long을 선택했습니다.**
+```java
+package com.gxdxx.jpa.controller;
+
+...
+
+@Controller
+@RequiredArgsConstructor
+public class MemberController {
+
+    ...
+
+  
+    @GetMapping("/members")
+    public String list(Model model) {
+        List<Member> members = memberService.findMembers(); // API를 만들 때는 엔티티를 외부로 반환하면 안된다.
+        model.addAttribute("members", members);
+        return "members/memberList";
+    }
+    
+}
+```
+
+#### 회원 목록 화면
+
+```html
+<!DOCTYPE HTML>
+<html xmlns:th="http://www.thymeleaf.org">
+<head th:replace="fragments/header :: header" />
+
+<body>
+<div class="container">
+
+    <div th:replace="fragments/bodyHeader :: bodyHeader" />
+
+    <div>
+        <table class="table table-striped">
+            <thead>
+            <tr>
+                <th>#</th>
+                <th>이름</th>
+                <th>도시</th>
+                <th>주소</th>
+                <th>우편번호</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr th:each="member : ${members}">
+                <td th:text="${member.id}"></td>
+                <td th:text="${member.name}"></td>
+                <td th:text="${member.address?.city}"></td>
+                <td th:text="${member.address?.street}"></td>
+                <td th:text="${member.address?.zipcode}"></td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div th:replace="fragments/footer :: footer" />
+
+</div> <!-- /container -->
+</body>
+</html>
+```
+
+- <td th:text="${member.address?.city}"></td>
+  - ?를 사용하면 null일 경우 무시한다.
+
+### form 객체 vs 엔티티 직접 사용
+
+- 엔티티는 핵심 비즈니스 로직만 가지고 있고, 화면을 위한 로직은 없어야 한다.
+- api를 만들때는 엔티티를 절대로 외부로 반환하면 안된다.
+- 화면이나 api을 처리할 때는 폼 객체나 DTO를 사용해서 엔티티를 순수하게 유지해야 한다.
+
+### 상품 등록
+
+#### 상품 등록 폼
+
+```java
+package com.gxdxx.jpa.controller;
+
+...
+
+@Getter @Setter
+public class BookForm {
+
+    private Long id;
+
+    private String name;
+    private int price;
+    private int stockQuantity;
+
+    private String author;
+    private String isbn;
+}
+```
+
+#### 상품 등록 컨트롤러
+
+```java
+package com.gxdxx.jpa.controller;
+
+import com.gxdxx.jpa.domain.item.Book;
+import com.gxdxx.jpa.domain.item.Item;
+import com.gxdxx.jpa.service.ItemService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+
+import java.util.List;
+
+@Controller
+@RequiredArgsConstructor
+public class ItemController {
+
+  private final ItemService itemService;
+
+  @GetMapping("/items/new")
+  public String createForm(Model model) {
+    model.addAttribute("form", new BookForm());
+    return "items/createItemForm";
+  }
+
+  @PostMapping("/items/new")
+  public String create(BookForm form) {
+    itemService.saveItem(form.getName(), form.getPrice(), form.getStockQuantity, form.getAuthor, form.getIsbn());
+    return "redirect:/";
+  }
+
+}
+```
+
+#### 상품 등록 화면
+
+```html
+<!DOCTYPE HTML>
+<html xmlns:th="http://www.thymeleaf.org">
+<head th:replace="fragments/header :: header" />
+
+<body>
+<div class="container">
+
+    <div th:replace="fragments/bodyHeader :: bodyHeader"/>
+
+    <form th:action="@{/items/new}" th:object="${form}" method="post">
+
+        <div class="form-group">
+            <label th:for="name">상품명</label>
+            <input type="text" th:field="*{name}" class="form-control"
+                   placeholder="이름을 입력하세요">
+        </div>
+
+        <div class="form-group">
+            <label th:for="price">가격</label>
+            <input type="number" th:field="*{price}" class="form-control"
+                   placeholder="가격을 입력하세요">
+        </div>
+
+        <div class="form-group">
+            <label th:for="stockQuantity">수량</label>
+            <input type="number" th:field="*{stockQuantity}" class="form-control" placeholder="수량을 입력하세요">
+        </div>
+
+        <div class="form-group">
+            <label th:for="author">저자</label>
+            <input type="text" th:field="*{author}" class="form-control"
+                   placeholder="저자를 입력하세요">
+        </div>
+
+        <div class="form-group">
+            <label th:for="isbn">ISBN</label>
+            <input type="text" th:field="*{isbn}" class="form-control"
+                   placeholder="ISBN을 입력하세요">
+        </div>
+
+        <button type="submit" class="btn btn-primary">Submit</button>
+
+    </form>
+
+    <br/>
+
+    <div th:replace="fragments/footer :: footer" />
+
+</div> <!-- /container -->
+</body>
+</html>
+```
+
+### 상품 목록
+
+#### 상품 목록 컨트롤러
+
+```java
+package com.gxdxx.jpa.controller;
+
+...
+
+@Controller
+@RequiredArgsConstructor
+public class ItemController {
+
+    ...
+
+    @GetMapping("/items")
+    public String list(Model model) {
+        List<Item> items = itemService.findItems();
+        model.addAttribute("items", items);
+        return "items/itemList";
+    }
+
+}
+```
+
+### 상품 수정
+
+#### 상품 수정 컨트롤러
+
+```java
+ppackage com.gxdxx.jpa.controller;
+
+...
+
+@Controller
+@RequiredArgsConstructor
+public class ItemController {
+
+  ...
+
+  @GetMapping("/items/{itemId}/edit")
+  public String updateItemForm(@PathVariable("itemId") Long itemId, Model model) {
+    Book item = (Book) itemService.findOne(itemId);
+
+    BookForm form = new BookForm(item.getId(), item.getName(), item.getPrice(), item.getStockQuantity(), item.getAuthor(), item.getIsbn());
+
+    model.addAttribute("form", form);
+    return "items/updateItemForm";
+  }
+
+  @PostMapping("/items/{itemId}/edit")    // id가 조작될 수 있기 때문에 item 권한이 있는지 체크하는게 좋다.
+  public String updateItem(@PathVariable Long itemId, @ModelAttribute("form") BookForm form) {
+
+    itemService.updateItem(itemId, form.getName(), form.getPrice(), form.getStockQuantity());
+    return "redirect:/items";
+  }
+
+}
+```
+
+## 변경 감지와 병합(merge)
+
+### 준영속 엔티티
+
+- 영속성 컨텍스트가 더는 관리하지 않는 엔티티
+
+### 준영속 엔티티를 수정하는 2가지 방법
+
+#### 변경 감지 기능 사용
+
+```java
+@Transactional
+void update(Item itemParam) { //itemParam: 파리미터로 넘어온 준영속 상태의 엔티티
+    
+     Item findItem = em.find(Item.class, itemParam.getId()); //같은 엔티티를 조회한다.
+     findItem.setPrice(itemParam.getPrice()); //데이터를 수정한다.
+        
+}
+```
+
+- 트랜잭션 안에서 엔티티를 다시 조회하고 변경하면 트랜잭션 커밋 시점에 변경 감지(Dirty Checking)이 동작해서 db에 update sql이 실행된다.
+- 원하는 속성만 선택해서 변경할 수 있다.
+
+#### 병합 사용
+
+```java
+@Transactional
+void update(Item itemParam) { //itemParam: 파리미터로 넘어온 준영속 상태의 엔티티
+    Item mergeItem = em.merge(item);
+}
+```
+
+- 준영속 상태의 엔티티를 영속 상태로 변경할 때 사용한다.
+- 모든 속성을 변경시켜서 값이 없으면 null로 업데이트 해버린다.
+
+#### 병합 동작 방식
+
+<img src="https://user-images.githubusercontent.com/35963403/159153630-3748ba51-feeb-4582-bfa6-7aa5dcd379d1.PNG" width="700">
+
+1. merge() 를 실행한다.
+2. 파라미터로 넘어온 준영속 엔티티의 식별자 값으로 1차 캐시에서 엔티티를 조회한다.
+   2-1. 만약 1차 캐시에 엔티티가 없으면 데이터베이스에서 엔티티를 조회하고, 1차 캐시에 저장한다.
+3. 조회한 영속 엔티티( mergeMember )에 member 엔티티의 값을 채워 넣는다. (member 엔티티의 모든 값 을 mergeMember에 밀어 넣는다. 이때 mergeMember의 “회원1”이라는 이름이 “회원명변경”으로 바뀐다.)
+4. 영속 상태인 mergeMember를 반환한다
+   - **merge를 하고 반환된 객체가 영속성 컨텍스트에서 관리되고 파라미터로 넘겼던 객체는 영속성 상태로 변하지 않는다.**
+
+#### 간단히 정리한 병합 동작 방식
+
+1. 준영속 엔티티의 식별자 값으로 영속 엔티티를 조회한다.
+2. 영속 엔티티의 값을 준영속 엔티티의 값으로 모두 교체한다.(병합)
+3. 트랜잭션 커밋 시점에 변경 감지 기능이 동작해서 데이터베이스에 UPDATE SQL이 실행
+
+### 해결 방법
+
+#### 엔티티를 변경할 때는 항상 변경 감지를 사용한다.
+
+- 트랜잭션이 있는 서비스 계층에 식별자(id)와 변경할 데이터를 전달한다.
+- 트랜잭션이 있는 서비스 계층에서 영속 상태의 엔티티를 조회하고, 엔티티의 데이터를 직접 변경한다.
+- 트랜잭션 커밋 시점에 변경 감지가 실행된다.
+
+### 상품 주문
+
+#### 상품 주문 컨트롤러
+
+```java
+package com.gxdxx.jpa.controller;
+
+...
+
+@Controller
+@RequiredArgsConstructor
+public class OrderController {
+
+    private final OrderService orderService;
+    private final MemberService memberService;
+    private final ItemService itemService;
+
+    @GetMapping("/order")
+    public String createForm(Model model) {
+
+        List<Member> members = memberService.findMembers();
+        List<Item> items = itemService.findItems();
+
+        model.addAttribute("members", members);
+        model.addAttribute("items", items);
+
+        return "order/orderForm";
+    }
+
+    @PostMapping("/order")
+    public String order(@RequestParam("memberId") Long memberId,    // 핵심 비즈니스 로직이 있는 경우엔 식별자만 넘겨주고 서비스에서 로직을 실행하는게 좋다.(영속성 상태에서 처리)
+                        @RequestParam("itemId") Long itemId,
+                        @RequestParam("count") int count) {
+
+        orderService.order(memberId, itemId, count);
+        return "redirect:/orders";
+    }
+
+}
+```
+
+#### 주문 목록 검색, 취소 컨트롤러
+
+```java
+package com.gxdxx.jpa.controller;
+
+...
+
+@Controller
+@RequiredArgsConstructor
+public class OrderController {
+
+    ...
+
+    @GetMapping("/orders")
+    public String orderList(@ModelAttribute("orderSearch") OrderSearch orderSearch, Model model) {
+        List<Order> orders = orderService.findOrders(orderSearch);
+        model.addAttribute("orders", orders);
+
+        return "order/orderList";
+    }
+    
+    @PostMapping("/orders/{orderId}/cancel")
+    public String cancelOrder(@PathVariable("orderId") Long orderId) {
+        orderService.cancelOrder(orderId);
+        return "redirect:/orders";
+    }
+    
+}
 ```
