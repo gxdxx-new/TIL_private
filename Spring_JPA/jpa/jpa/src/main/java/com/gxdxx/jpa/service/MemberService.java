@@ -25,14 +25,15 @@ public class MemberService {
      * 회원 가입
      */
     @Transactional
-    public Long join(Member member) {
-        validateDuplicateMember(member);    // 중복 회원 검증
+    public Long join(String name, Address address) {
+        validateDuplicateMember(name);    // 중복 회원 검증
+        Member member = Member.createMember(name, address);
         memberRepository.save(member);  // db에 저장되기 전이여도 id값이 생성됨
         return member.getId();
     }
 
-    private void validateDuplicateMember(Member member) {
-        List<Member> findMembers = memberRepository.findByName(member.getName());
+    private void validateDuplicateMember(String name) {
+        List<Member> findMembers = memberRepository.findByName(name);
         if (!findMembers.isEmpty()) {
             throw new IllegalStateException("이미 존재하는 회원입니다.");
         }

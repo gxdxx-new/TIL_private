@@ -24,4 +24,12 @@ public class Member {
     @JsonIgnore
     @OneToMany(mappedBy = "member") // order 테이블에 있는 멤버 테이블에 의해 매핑, 읽기 전용이 됨
     private List<Order> orders = new ArrayList<>();
+
+    public static Member createMember(String name, Address address) {
+        Member member = new Member();
+        member.setName(name);
+        member.setAddress(address);
+        return member;
+    }
+
 }
