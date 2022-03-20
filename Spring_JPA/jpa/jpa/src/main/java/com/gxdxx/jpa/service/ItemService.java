@@ -16,7 +16,8 @@ public class ItemService {
     private final ItemRepository itemRepository;
 
     @Transactional
-    public void saveItem(Item item) {
+    public void saveItem(String name, int price, int stockQuantity, String Author, String isbn) {
+        Item item = Book.createBook(name, price, stockQuantity, Author, isbn);
         itemRepository.save(item);
     }
 

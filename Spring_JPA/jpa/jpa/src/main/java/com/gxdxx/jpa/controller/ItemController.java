@@ -27,14 +27,7 @@ public class ItemController {
 
     @PostMapping("/items/new")
     public String create(BookForm form) {
-        Book book = new Book();
-        book.setName(form.getName());   // 실무에선 setter을 사용하지 않는게 좋다.
-        book.setPrice(form.getPrice());
-        book.setStockQuantity(form.getStockQuantity());
-        book.setAuthor(form.getAuthor());
-        book.setIsbn(form.getIsbn());
-
-        itemService.saveItem(book);
+        itemService.saveItem(form.getName(), form.getPrice(), form.getStockQuantity, form.getAuthor, form.getIsbn());
         return "redirect:/";
     }
 
@@ -49,13 +42,7 @@ public class ItemController {
     public String updateItemForm(@PathVariable("itemId") Long itemId, Model model) {
         Book item = (Book) itemService.findOne(itemId);
 
-        BookForm form = new BookForm();
-        form.setId(item.getId());
-        form.setName(item.getName());
-        form.setPrice(item.getPrice());
-        form.setStockQuantity(item.getStockQuantity());
-        form.setAuthor(item.getAuthor());
-        form.setIsbn(item.getIsbn());
+        BookForm form = new BookForm(item.getId(), item.getName(), item.getPrice(), item.getStockQuantity(), item.getAuthor(), item.getIsbn());
 
         model.addAttribute("form", form);
         return "items/updateItemForm";
@@ -63,15 +50,6 @@ public class ItemController {
 
     @PostMapping("/items/{itemId}/edit")    // id가 조작될 수 있기 때문에 item 권한이 있는지 체크하는게 좋다.
     public String updateItem(@PathVariable Long itemId, @ModelAttribute("form") BookForm form) {
-
-//        Book book = new Book();
-//        book.setId(form.getId());
-//        book.setName(form.getName());
-//        book.setPrice(form.getPrice());
-//        book.setStockQuantity(form.getStockQuantity());
-//        book.setAuthor(form.getAuthor());
-//        book.setIsbn(form.getIsbn());
-//        itemService.saveItem(book);
 
         itemService.updateItem(itemId, form.getName(), form.getPrice(), form.getStockQuantity());
         return "redirect:/items";
